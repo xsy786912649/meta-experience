@@ -35,8 +35,8 @@ RUN pip install --no-cache-dir \
 RUN crawl4ai-setup || true
 RUN crawl4ai-doctor || true
 
-RUN python -m nltk.downloader punkt && \
-    python -m nltk.downloader punkt_tab
+RUN pip install --no-cache-dir nltk && \
+    python3 -m nltk.downloader punkt punkt_tab
 
 # Explicitly install flash-attn because this codebase requires it.
 RUN pip install --no-cache-dir --no-build-isolation "flash-attn==${FLASH_ATTN_VERSION}"
