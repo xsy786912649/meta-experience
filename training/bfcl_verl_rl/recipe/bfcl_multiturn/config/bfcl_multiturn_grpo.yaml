@@ -1,0 +1,41 @@
+hydra:
+  searchpath:
+    - file://verl/trainer/config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  max_prompt_length: 16384
+  max_response_length: 4096
+  train_batch_size: 256
+  val_batch_size: 128
+  truncation: error
+  return_raw_chat: true
+  filter_overlong_prompts: false
+  custom_cls:
+    path: pkg://recipe/bfcl_multiturn/bfcl_rl_dataset
+    name: BFCLMultiTurnRLDataset
+
+actor_rollout_ref:
+  rollout:
+    mode: async
+    prompt_length: 32768
+    response_length: 8192
+    max_model_len: 15000
+    n: 8
+    gpu_memory_utilization: 0.5
+    multi_turn:
+      enable: true
+      max_assistant_turns: 50
+      tool_config_path: null
+      completion_callback: recipe.bfcl_multiturn.bfcl_completion_callback.BFCLMultiTurnCompletionCallback
+      format: hermes
+
+reward_model:
+  reward_manager: step_level
+
+custom_reward_function:
+  path: pkg://recipe/bfcl_multiturn/bfcl_reward
+  name: compute_score

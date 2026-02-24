@@ -1,0 +1,44 @@
+ARG BASE_IMAGE=vllm/vllm-openai:v0.8.5
+FROM ${BASE_IMAGE}
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG FLASH_ATTN_VERSION=2.7.4.post1
+
+# OS utilities used in long-running training/debug sessions.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tmux \
+    screen \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python dependencies from your original Dockerfile.
+RUN pip install --no-cache-dir \
+    boto3 \
+    awscli \
+    ujson \
+    trafilatura \
+    pathvalidate \
+    smolagents \
+    mammoth \
+    markdownify \
+    python-pptx \
+    pdfminer.six \
+    puremagic \
+    pydub \
+    requests \
+    SpeechRecognition \
+    beautifulsoup4 \
+    youtube-transcript-api \
+    html2text \
+    jieba \
+    crawl4ai
+
+RUN crawl4ai-setup || true
+RUN crawl4ai-doctor || true
+
+RUN python -m nltk.downloader punkt && \
+    python -m nltk.downloader punkt_tab
+
+# Explicitly install flash-attn because this codebase requires it.
+RUN pip install --no-cache-dir --no-build-isolation "flash-attn==${FLASH_ATTN_VERSION}"
+
+WORKDIR /workspace/verl_toolmock
