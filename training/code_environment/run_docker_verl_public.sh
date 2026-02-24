@@ -12,8 +12,6 @@ BASE_IMAGE="${BASE_IMAGE:-vllm/vllm-openai:v0.8.5}"
 FLASH_ATTN_VERSION="${FLASH_ATTN_VERSION:-2.7.4.post1}"
 CONTAINER_NAME="${CONTAINER_NAME:-verl-local-dev}"
 WORKSPACE_MOUNT="${WORKSPACE_MOUNT:-$SCRIPT_DIR}"
-HOST_PORT="${HOST_PORT:-8011}"
-CONTAINER_PORT="${CONTAINER_PORT:-8011}"
 
 echo "[build] image=${IMAGE_TAG}"
 echo "[build] base_image=${BASE_IMAGE}"
@@ -28,14 +26,15 @@ docker build \
 
 echo "[run] container=${CONTAINER_NAME}"
 echo "[run] mount=${WORKSPACE_MOUNT} -> /workspace/verl_toolmock"
-echo "[run] ports=${HOST_PORT}:${CONTAINER_PORT}"
+echo "[run] mode=training shell (no model hosting)"
 
-docker run --gpus all -p "${HOST_PORT}:${CONTAINER_PORT}" \
+docker run --gpus all \
   --ipc=host \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
   -it --rm \
   --name "${CONTAINER_NAME}" \
+  --entrypoint /bin/bash \
   -v "${WORKSPACE_MOUNT}:/workspace/verl_toolmock" \
   --mount type=tmpfs,destination=/tmpfs \
   "${IMAGE_TAG}"
