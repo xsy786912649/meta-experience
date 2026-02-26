@@ -40,6 +40,13 @@ from verl.utils.import_utils import deprecated
 logger = logging.getLogger(__file__)
 
 
+def _short_err_msg(err: Exception, max_len: int = 400) -> str:
+    msg = str(err).replace("\n", " ")
+    if len(msg) > max_len:
+        return msg[:max_len] + "...(truncated)"
+    return msg
+
+
 def _is_context_overflow_error(msg: str) -> bool:
     lowered = (msg or "").lower()
     return "maximum context length" in lowered and "tokens" in lowered
@@ -438,17 +445,20 @@ class ChatCompletionScheduler:
             else:
                 # Let user handle the exception
                 exception = e
-                print(exception)
+                logger.error("chat completion request failed: %s", _short_err_msg(e))
 
         info["__depth__"] -= 1
 
         if exception is not None:
-            logger.exception(f"chat completion failed with exception: {exception}")
+            logger.error("chat completion failed: %s", _short_err_msg(exception))
         else:
             try:
                 await self.completion_callback(messages, completions, info, flag, reward_reference, total_messages) 
             except Exception as e:
-                logger.exception(f"completion callback failed with exception: {e}")
+                logger.error("completion callback failed: %s", _short_err_msg(e))
+                # Guarantee terminal reward so downstream postprocess won't miss reward.
+                if not messages or "reward" not in messages[-1]:
+                    messages.append({"reward": [0.0]})
 
         # No more ongoing completion requests
         if info["__depth__"] == 0:
@@ -535,10 +545,12 @@ class ChatCompletionScheduler:
                 batch_reward[i]=reward
                 batch_conversations[i] = conversation[:-1]
             except Exception as e:
-                print("skjbsdjfnskdjnfksjd")
-                print(conversation)
-                print("skjbsdjfnskdjnfksjd")
-                reward = [-0.0, -0.0, -0.0]
+                logger.warning(
+                    "missing terminal reward for sample %s, fallback to zero reward. err=%s",
+                    i,
+                    e,
+                )
+                reward = [0.0]
                 batch_reward[i]=reward
                 batch_conversations[i] = conversation[:]
 
