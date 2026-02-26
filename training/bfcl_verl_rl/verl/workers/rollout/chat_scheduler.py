@@ -40,6 +40,27 @@ from verl.utils.import_utils import deprecated
 logger = logging.getLogger(__file__)
 
 
+def _is_context_overflow_error(msg: str) -> bool:
+    lowered = (msg or "").lower()
+    return "maximum context length" in lowered and "tokens" in lowered
+
+
+def _build_empty_completion(request_id: str, model_name: str) -> ChatCompletion:
+    return ChatCompletion(
+        id=f"chatcmpl-{request_id}",
+        object="chat.completion",
+        created=int(time.time()),
+        model=model_name,
+        choices=[
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": ""},
+                "finish_reason": "stop",
+            }
+        ],
+    )
+
+
 
 class CompletionCallback(ABC):
     def __init__(self, config: DictConfig, scheduler: "ChatCompletionScheduler"):
@@ -361,9 +382,18 @@ class ChatCompletionScheduler:
                 **info["__sampling_params__"],
             )
         except Exception as e:
-            # Let user handle the exception
-            exception = e
-            print(exception)
+            err_msg = str(e)
+            if _is_context_overflow_error(err_msg):
+                logger.warning(
+                    "context overflow at %s, fallback to empty completion. detail: %s",
+                    address,
+                    err_msg,
+                )
+                completions = _build_empty_completion(request_id=request_id, model_name=self.model_name)
+            else:
+                # Let user handle the exception
+                exception = e
+                print(exception)
 
         info["__depth__"] -= 1
 
@@ -396,6 +426,10 @@ class ChatCompletionScheduler:
                 json=chat_complete_request,
             ) as resp:
                 data = await resp.json()
+                if resp.status >= 400:
+                    error_obj = data.get("error") if isinstance(data, dict) else None
+                    error_msg = error_obj.get("message") if isinstance(error_obj, dict) else str(data)
+                    raise RuntimeError(error_msg)
                 return ChatCompletion(**data)
         finally:
             await session.close()
