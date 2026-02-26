@@ -68,6 +68,15 @@ def _build_empty_completion(request_id: str, model_name: str) -> ChatCompletion:
     )
 
 
+def _estimate_chat_tokens(tokenizer, messages: List[Dict[str, Any]]) -> int:
+    try:
+        if tokenizer is None:
+            return -1
+        return len(tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True))
+    except Exception:
+        return -1
+
+
 def _safe_message_copy(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     copied: List[Dict[str, Any]] = []
     for msg in messages:
@@ -423,8 +432,16 @@ class ChatCompletionScheduler:
         self.request_id_to_address[request_id] = address
 
         completions, exception = None, None
+        messages = self._trim_messages_for_max_model_len(messages)
+        tok_est = _estimate_chat_tokens(getattr(self.completion_callback, "tokenizer", None), messages)
+        logger.info(
+            "chat_request request_id=%s address=%s messages=%s token_estimate=%s",
+            request_id,
+            address,
+            len(messages),
+            tok_est,
+        )
         try:
-            messages = self._trim_messages_for_max_model_len(messages)
             # NOTE: OpenAI client uses httpx, seems to have performance issue in high concurrency requests.
             completions = await self._chat_completions_aiohttp(
                 address,
@@ -443,9 +460,11 @@ class ChatCompletionScheduler:
                 )
                 completions = _build_empty_completion(request_id=request_id, model_name=self.model_name)
             else:
-                # Let user handle the exception
-                exception = e
                 logger.error("chat completion request failed: %s", _short_err_msg(e))
+                raise RuntimeError(
+                    f"chat completion request failed at {address}, "
+                    f"request_id={request_id}, messages={len(messages)}, token_estimate={tok_est}: {_short_err_msg(e)}"
+                ) from e
 
         info["__depth__"] -= 1
 
@@ -456,9 +475,7 @@ class ChatCompletionScheduler:
                 await self.completion_callback(messages, completions, info, flag, reward_reference, total_messages) 
             except Exception as e:
                 logger.error("completion callback failed: %s", _short_err_msg(e))
-                # Guarantee terminal reward so downstream postprocess won't miss reward.
-                if not messages or "reward" not in messages[-1]:
-                    messages.append({"reward": [0.0]})
+                raise
 
         # No more ongoing completion requests
         if info["__depth__"] == 0:
@@ -545,14 +562,10 @@ class ChatCompletionScheduler:
                 batch_reward[i]=reward
                 batch_conversations[i] = conversation[:-1]
             except Exception as e:
-                logger.warning(
-                    "missing terminal reward for sample %s, fallback to zero reward. err=%s",
-                    i,
-                    e,
-                )
-                reward = [0.0]
-                batch_reward[i]=reward
-                batch_conversations[i] = conversation[:]
+                raise AssertionError(
+                    f"missing terminal reward for sample {i}, "
+                    f"conversation_len={len(conversation)}, last_role={conversation[-1].get('role') if conversation else 'none'}"
+                ) from e
             # Print per-trajectory reward for quick online debugging.
             logger.info("trajectory_reward sample=%s reward=%s", i, reward)
 
@@ -614,7 +627,11 @@ class ChatCompletionScheduler:
                         "conversation": batch_conversations[i],
                         "tools_content": batch_tools_content[i],
                         "flag": batch_flag[i],
-                        "total_messages": [json.loads(x) if isinstance(x, str) else x for x in batch_total_messages[i]],
+                        "total_messages": (
+                            [json.loads(x) if isinstance(x, str) else x for x in batch_total_messages[i]]
+                            if isinstance(batch_total_messages[i], (list, tuple))
+                            else (json.loads(batch_total_messages[i]) if isinstance(batch_total_messages[i], str) else batch_total_messages[i])
+                        ),
                         "reward": batch_reward[i],
                     }
                     fh.write(json.dumps(record, ensure_ascii=False))
