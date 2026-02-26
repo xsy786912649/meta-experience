@@ -7,7 +7,8 @@ cd /Users/xusiyuan/Desktop/meta-experience/training/bfcl_verl_rl
 python3 -m recipe.bfcl_multiturn.preprocess_bfcl_multiturn_rl \
   --local_dir data/bfcl_multiturn_rl \
   --unseen_env_ratio 0.25 \
-  --seen_test_ratio 0.2
+  --seen_test_ratio 0.2 \
+  --train_size 512
 ```
 
 Outputs:
@@ -29,6 +30,7 @@ Common overrides:
 - `DATA_DIR=data/bfcl_multiturn_rl`
 - `VAL_SPLIT=seen` or `VAL_SPLIT=unseen`
 - `NGPU=4`
+- `TOTAL_EPOCHS=40`
 
 ## 3) Evaluate seen/unseen split
 

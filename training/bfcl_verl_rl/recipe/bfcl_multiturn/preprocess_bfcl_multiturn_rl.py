@@ -93,6 +93,15 @@ def _split_by_env(rows: list[dict], unseen_env_ratio: float, seen_test_ratio: fl
     return train, test_seen, test_unseen, seen_envs, unseen_envs
 
 
+def _cap_train_rows(train_rows: list[dict], train_size: int, seed: int) -> list[dict]:
+    if train_size <= 0 or len(train_rows) <= train_size:
+        return train_rows
+    rng = random.Random(seed)
+    sampled = train_rows[:]
+    rng.shuffle(sampled)
+    return sampled[:train_size]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--local_dir", default="data/bfcl_multiturn_rl")
@@ -100,6 +109,12 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--unseen_env_ratio", type=float, default=0.25)
     parser.add_argument("--seen_test_ratio", type=float, default=0.2)
+    parser.add_argument(
+        "--train_size",
+        type=int,
+        default=512,
+        help="Cap train split size. <=0 means no cap.",
+    )
     args = parser.parse_args()
 
     categories = [x.strip() for x in args.categories.split(",") if x.strip()]
@@ -110,6 +125,7 @@ def main():
         seen_test_ratio=args.seen_test_ratio,
         seed=args.seed,
     )
+    train = _cap_train_rows(train, train_size=args.train_size, seed=args.seed)
 
     local_dir = os.path.abspath(os.path.expanduser(args.local_dir))
     os.makedirs(local_dir, exist_ok=True)
@@ -123,6 +139,7 @@ def main():
         "num_train": len(train),
         "num_test_seen": len(test_seen),
         "num_test_unseen": len(test_unseen),
+        "train_size_cap": args.train_size,
         "num_seen_envs": len(seen_envs),
         "num_unseen_envs": len(unseen_envs),
         "seen_envs": sorted(list(seen_envs)),

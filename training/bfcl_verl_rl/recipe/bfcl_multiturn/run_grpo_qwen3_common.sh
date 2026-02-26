@@ -15,6 +15,7 @@ PROJECT_NAME=${PROJECT_NAME:-bfcl_multiturn_rl}
 DATA_DIR=${DATA_DIR:-$REPO_ROOT/data/bfcl_multiturn_rl}
 VAL_SPLIT=${VAL_SPLIT:-seen}  # seen | unseen
 NGPU=${NGPU:-4}
+TOTAL_EPOCHS=${TOTAL_EPOCHS:-40}
 TIMESTAMP=$(date "+%Y%m%d_%H%M%S")
 LOG_DIR=${LOG_DIR:-$REPO_ROOT/logs}
 mkdir -p "$LOG_DIR"
@@ -70,4 +71,4 @@ python3 -m verl.trainer.main_ppo \
   trainer.default_local_dir="$HOME/checkpoints/$PROJECT_NAME/$EXPERIMENT_NAME" \
   trainer.save_freq=10 \
   trainer.test_freq=10 \
-  trainer.total_epochs=1 "$@"
+  trainer.total_epochs="$TOTAL_EPOCHS" "$@"
