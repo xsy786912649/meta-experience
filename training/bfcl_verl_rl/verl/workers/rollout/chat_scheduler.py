@@ -61,6 +61,16 @@ def _build_empty_completion(request_id: str, model_name: str) -> ChatCompletion:
     )
 
 
+def _safe_message_copy(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    copied: List[Dict[str, Any]] = []
+    for msg in messages:
+        item = dict(msg)
+        if "content" in item and item["content"] is not None and not isinstance(item["content"], str):
+            item["content"] = str(item["content"])
+        copied.append(item)
+    return copied
+
+
 
 class CompletionCallback(ABC):
     def __init__(self, config: DictConfig, scheduler: "ChatCompletionScheduler"):
@@ -335,6 +345,40 @@ class ChatCompletionScheduler:
             module = importlib.import_module(module_path)
             self.completion_callback = getattr(module, class_name)(config, self)
 
+    def _trim_messages_for_max_model_len(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Best-effort trim before request to avoid vLLM context overflow."""
+        max_model_len = int(getattr(self.config, "max_model_len", 0) or 0)
+        if max_model_len <= 0:
+            return messages
+
+        tokenizer = getattr(self.completion_callback, "tokenizer", None)
+        if tokenizer is None:
+            return messages
+
+        trimmed = _safe_message_copy(messages)
+
+        def _num_tokens(msgs: List[Dict[str, Any]]) -> int:
+            return len(tokenizer.apply_chat_template(msgs, tokenize=True, add_generation_prompt=True))
+
+        # Keep system prompt; evict oldest non-system turns first.
+        while len(trimmed) > 1 and _num_tokens(trimmed) > max_model_len:
+            if trimmed[0].get("role") == "system":
+                del trimmed[1]
+            else:
+                del trimmed[0]
+
+        if _num_tokens(trimmed) <= max_model_len:
+            return trimmed
+
+        # Last-resort: truncate the final content payload.
+        last = dict(trimmed[-1])
+        content = last.get("content", "")
+        if isinstance(content, str) and content:
+            keep = max(64, len(content) // 4)
+            last["content"] = content[-keep:]
+            trimmed[-1] = last
+        return trimmed
+
     def submit_chat_completions(self, *, messages: List[Dict[str, str]], request_id: str, info: Dict[str, Any], flag, reward_reference, total_messages):
         """Submit chat completion request without wait, completion_callback will be called when the request is done.
 
@@ -373,6 +417,7 @@ class ChatCompletionScheduler:
 
         completions, exception = None, None
         try:
+            messages = self._trim_messages_for_max_model_len(messages)
             # NOTE: OpenAI client uses httpx, seems to have performance issue in high concurrency requests.
             completions = await self._chat_completions_aiohttp(
                 address,
