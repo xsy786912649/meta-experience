@@ -553,6 +553,22 @@ class ChatCompletionScheduler:
                 reward = [0.0]
                 batch_reward[i]=reward
                 batch_conversations[i] = conversation[:]
+            # Print per-trajectory reward for quick online debugging.
+            logger.info("trajectory_reward sample=%s reward=%s", i, reward)
+
+        # Print batch-level reward ratio (final-step reward > 0 means success).
+        try:
+            success_cnt = sum(1 for r in batch_reward if isinstance(r, (list, tuple)) and len(r) > 0 and float(r[-1]) > 0.0)
+            total_cnt = len(batch_reward)
+            success_ratio = (success_cnt / total_cnt) if total_cnt > 0 else 0.0
+            logger.info(
+                "trajectory_reward_ratio success=%s total=%s ratio=%.4f",
+                success_cnt,
+                total_cnt,
+                success_ratio,
+            )
+        except Exception as ratio_err:
+            logger.warning("failed to compute trajectory reward ratio: %s", ratio_err)
 
         def _reserve_next_dump_path(dump_dir: str, prefix: str = "batch_", suffix: str = ".json"):
             """
