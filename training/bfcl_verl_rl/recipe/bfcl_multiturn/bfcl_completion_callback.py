@@ -74,6 +74,31 @@ class BFCLMultiTurnCompletionCallback(ToolCompletionCallback):
         rewards = build_reward_vector(state["assistant_turns"], success=success)
         messages.append({"reward": rewards})
 
+    async def handle_request_error(
+        self,
+        messages: list[dict[str, str]],
+        info: dict[str, Any],
+        total_messages,
+        error_type: str,
+        error_message: str,
+    ) -> None:
+        # On context overflow, rollback latest user turn and terminate this trajectory with failure reward.
+        if error_type == "context_overflow":
+            if messages and messages[-1].get("role") == "user":
+                messages.pop()
+            if "__bfcl_state__" in info:
+                self._finish_episode(messages, info, success=False)
+            else:
+                # Overflow may happen before first callback; still ensure terminal reward exists.
+                messages.append({"reward": [0.0]})
+            return
+
+        # Other request failures: terminate with failure reward.
+        if "__bfcl_state__" in info:
+            self._finish_episode(messages, info, success=False)
+        else:
+            messages.append({"reward": [0.0]})
+
     async def __call__(
         self,
         messages: list[dict[str, str]],
@@ -208,4 +233,3 @@ class BFCLMultiTurnCompletionCallback(ToolCompletionCallback):
         num_turns = np.array([len(conversation) for conversation in batch_conversations], dtype=np.int32)
         rewards = np.array([reward for reward in batch_reward], dtype=object)
         return DataProto(batch=batch_td, non_tensor_batch={"__num_turns__": num_turns, "__reward__": rewards})
-

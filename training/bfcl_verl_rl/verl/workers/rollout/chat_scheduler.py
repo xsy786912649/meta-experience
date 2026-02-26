@@ -454,23 +454,38 @@ class ChatCompletionScheduler:
             err_msg = str(e)
             if _is_context_overflow_error(err_msg):
                 logger.warning(
-                    "context overflow at %s, fallback to empty completion. detail: %s",
+                    "context overflow at %s, terminate trajectory as failure. detail: %s",
                     address,
                     err_msg,
                 )
-                completions = _build_empty_completion(request_id=request_id, model_name=self.model_name)
+                if hasattr(self.completion_callback, "handle_request_error"):
+                    await self.completion_callback.handle_request_error(
+                        messages=messages,
+                        info=info,
+                        total_messages=total_messages,
+                        error_type="context_overflow",
+                        error_message=err_msg,
+                    )
+                else:
+                    messages.append({"reward": [0.0]})
             else:
                 logger.error("chat completion request failed: %s", _short_err_msg(e))
-                raise RuntimeError(
-                    f"chat completion request failed at {address}, "
-                    f"request_id={request_id}, messages={len(messages)}, token_estimate={tok_est}: {_short_err_msg(e)}"
-                ) from e
+                if hasattr(self.completion_callback, "handle_request_error"):
+                    await self.completion_callback.handle_request_error(
+                        messages=messages,
+                        info=info,
+                        total_messages=total_messages,
+                        error_type="request_error",
+                        error_message=err_msg,
+                    )
+                else:
+                    messages.append({"reward": [0.0]})
 
         info["__depth__"] -= 1
 
         if exception is not None:
             logger.error("chat completion failed: %s", _short_err_msg(exception))
-        else:
+        elif completions is not None:
             try:
                 await self.completion_callback(messages, completions, info, flag, reward_reference, total_messages) 
             except Exception as e:
