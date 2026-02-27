@@ -150,6 +150,14 @@ class BFCLMultiTurnCompletionCallback(ToolCompletionCallback):
             )
             for res in execution_results:
                 messages.append(_to_tool_response_message(res))
+
+            # If appending tool responses overflows context, rollback those tool responses and fail this trajectory.
+            if self._token_len(messages) > self.max_model_len:
+                while messages and messages[-1].get("role") == "user" and isinstance(messages[-1].get("content"), str) and messages[-1]["content"].startswith("<tool_response>"):
+                    messages.pop()
+                self._finish_episode(messages, info, success=False)
+                return
+
             self.scheduler.submit_chat_completions(
                 messages=messages,
                 request_id=completions.id,
