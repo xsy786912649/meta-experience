@@ -443,7 +443,7 @@ class ChatCompletionScheduler:
                 try:
                     await self.completion_callback(messages, completions, info, flag, reward_reference, total_messages)
                 except Exception as e:
-                    logger.error("completion callback failed: %s", _short_err_msg(e))
+                    logger.exception("completion callback failed: %s", _short_err_msg(e))
                     if hasattr(self.completion_callback, "handle_request_error"):
                         await self.completion_callback.handle_request_error(
                             messages=messages,
