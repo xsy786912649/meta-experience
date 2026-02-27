@@ -49,6 +49,7 @@ class BFCLMultiTurnCompletionCallback(ToolCompletionCallback):
     def __init__(self, config: DictConfig, scheduler: ChatCompletionScheduler):
         super().__init__(config, scheduler)
         self.max_assistant_turns = config.actor_rollout_ref.rollout.max_assistant_turns
+        self.max_model_len = int(config.actor_rollout_ref.rollout.max_model_len)
 
     def _init_episode(self, info: dict, payload: dict):
         run_namespace = f"bfcl_{uuid.uuid4().hex[:10]}"
@@ -74,6 +75,13 @@ class BFCLMultiTurnCompletionCallback(ToolCompletionCallback):
         rewards = build_reward_vector(state["assistant_turns"], success=success)
         messages.append({"reward": rewards})
 
+    def _rollback_trailing_users(self, messages: list[dict]) -> None:
+        while messages and messages[-1].get("role") == "user":
+            messages.pop()
+
+    def _token_len(self, messages: list[dict]) -> int:
+        return len(self.tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True))
+
     async def handle_request_error(
         self,
         messages: list[dict[str, str]],
@@ -84,8 +92,7 @@ class BFCLMultiTurnCompletionCallback(ToolCompletionCallback):
     ) -> None:
         # On context overflow, rollback latest user turn and terminate this trajectory with failure reward.
         if error_type == "context_overflow":
-            if messages and messages[-1].get("role") == "user":
-                messages.pop()
+            self._rollback_trailing_users(messages)
             if "__bfcl_state__" in info:
                 self._finish_episode(messages, info, success=False)
             else:
@@ -112,6 +119,13 @@ class BFCLMultiTurnCompletionCallback(ToolCompletionCallback):
         if "__bfcl_state__" not in info:
             self._init_episode(info, payload)
         state = info["__bfcl_state__"]
+
+        finish_reason = completions.choices[0].finish_reason
+        if finish_reason == "length":
+            # Incomplete response due to hard length stop: rollback last pending user part and fail this trajectory.
+            self._rollback_trailing_users(messages)
+            self._finish_episode(messages, info, success=False)
+            return
 
         content = _normalize_tool_calls(completions.choices[0].message.content or "")
         messages.append({"role": "assistant", "content": content})
@@ -167,6 +181,12 @@ class BFCLMultiTurnCompletionCallback(ToolCompletionCallback):
         else:
             for msg in payload["question"][next_turn_idx]:
                 messages.append({"role": msg["role"], "content": msg["content"]})
+
+        # Case 1: adding next-turn user prompt already exceeds context window.
+        if self._token_len(messages) > self.max_model_len:
+            self._rollback_trailing_users(messages)
+            self._finish_episode(messages, info, success=False)
+            return
 
         self.scheduler.submit_chat_completions(
             messages=messages,
