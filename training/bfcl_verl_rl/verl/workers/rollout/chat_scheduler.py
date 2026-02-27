@@ -431,6 +431,8 @@ class ChatCompletionScheduler:
         request_id = uuid4().hex
         self.request_id_to_address[request_id] = address
 
+        # Keep original shared reference; `messages` may be replaced by trimmed copy.
+        shared_messages = messages
         completions, exception = None, None
         messages = self._trim_messages_for_max_model_len(messages)
         tok_est = _estimate_chat_tokens(getattr(self.completion_callback, "tokenizer", None), messages)
@@ -442,59 +444,67 @@ class ChatCompletionScheduler:
             tok_est,
         )
         try:
-            # NOTE: OpenAI client uses httpx, seems to have performance issue in high concurrency requests.
-            completions = await self._chat_completions_aiohttp(
-                address,
-                messages=messages,
-                extra_body=self.completion_callback.extra_body,
-                extra_headers={"x-request-id": request_id},
-                **info["__sampling_params__"],
-            )
-        except Exception as e:
-            err_msg = str(e)
-            if _is_context_overflow_error(err_msg):
-                logger.warning(
-                    "context overflow at %s, terminate trajectory as failure. detail: %s",
-                    address,
-                    err_msg,
-                )
-                if hasattr(self.completion_callback, "handle_request_error"):
-                    await self.completion_callback.handle_request_error(
-                        messages=messages,
-                        info=info,
-                        total_messages=total_messages,
-                        error_type="context_overflow",
-                        error_message=err_msg,
-                    )
-                else:
-                    messages.append({"reward": [0.0]})
-            else:
-                logger.error("chat completion request failed: %s", _short_err_msg(e))
-                if hasattr(self.completion_callback, "handle_request_error"):
-                    await self.completion_callback.handle_request_error(
-                        messages=messages,
-                        info=info,
-                        total_messages=total_messages,
-                        error_type="request_error",
-                        error_message=err_msg,
-                    )
-                else:
-                    messages.append({"reward": [0.0]})
-
-        info["__depth__"] -= 1
-
-        if exception is not None:
-            logger.error("chat completion failed: %s", _short_err_msg(exception))
-        elif completions is not None:
             try:
-                await self.completion_callback(messages, completions, info, flag, reward_reference, total_messages) 
+                # NOTE: OpenAI client uses httpx, seems to have performance issue in high concurrency requests.
+                completions = await self._chat_completions_aiohttp(
+                    address,
+                    messages=messages,
+                    extra_body=self.completion_callback.extra_body,
+                    extra_headers={"x-request-id": request_id},
+                    **info["__sampling_params__"],
+                )
             except Exception as e:
-                logger.error("completion callback failed: %s", _short_err_msg(e))
-                raise
+                err_msg = str(e)
+                if _is_context_overflow_error(err_msg):
+                    logger.warning(
+                        "context overflow at %s, terminate trajectory as failure. detail: %s",
+                        address,
+                        err_msg,
+                    )
+                    if hasattr(self.completion_callback, "handle_request_error"):
+                        await self.completion_callback.handle_request_error(
+                            messages=messages,
+                            info=info,
+                            total_messages=total_messages,
+                            error_type="context_overflow",
+                            error_message=err_msg,
+                        )
+                    else:
+                        messages.append({"reward": [0.0]})
+                else:
+                    logger.error("chat completion request failed: %s", _short_err_msg(e))
+                    if hasattr(self.completion_callback, "handle_request_error"):
+                        await self.completion_callback.handle_request_error(
+                            messages=messages,
+                            info=info,
+                            total_messages=total_messages,
+                            error_type="request_error",
+                            error_message=err_msg,
+                        )
+                    else:
+                        messages.append({"reward": [0.0]})
 
-        # No more ongoing completion requests
-        if info["__depth__"] == 0:
-            info["__done__"].set()
+            if completions is not None:
+                try:
+                    await self.completion_callback(messages, completions, info, flag, reward_reference, total_messages)
+                except Exception as e:
+                    logger.error("completion callback failed: %s", _short_err_msg(e))
+                    if hasattr(self.completion_callback, "handle_request_error"):
+                        await self.completion_callback.handle_request_error(
+                            messages=messages,
+                            info=info,
+                            total_messages=total_messages,
+                            error_type="callback_error",
+                            error_message=str(e),
+                        )
+                    else:
+                        messages.append({"reward": [0.0]})
+        finally:
+            # Sync back to shared list so caller sees callback/error updates (e.g., terminal reward).
+            shared_messages[:] = messages
+            info["__depth__"] -= 1
+            if info["__depth__"] == 0:
+                info["__done__"].set()
 
     async def _chat_completions_openai(self, address: str, **chat_complete_request) -> ChatCompletion:
         client = AsyncOpenAI(base_url=f"http://{address}/v1", api_key="token-abc123", timeout=None, max_retries=0)
