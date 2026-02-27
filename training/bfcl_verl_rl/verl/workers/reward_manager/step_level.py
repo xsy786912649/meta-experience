@@ -120,9 +120,11 @@ class StepRewardManager:
             else:
                 reward = reward[:num_turns_model]
 
-            for j in range(len(reward)):
-                if reward[j] == 0:
-                    reward[j] = -0.001
+            # Collapse to trajectory-level terminal reward:
+            # success -> 1.0, failure -> -0.001, independent of turn count.
+            is_success = any(x > 0 for x in reward)
+            reward = [0.0] * num_turns_model
+            reward[-1] = 1.0 if is_success else -0.001
 
             #print("reward:", reward)
             #print("num_turns_model:", num_turns_model)
