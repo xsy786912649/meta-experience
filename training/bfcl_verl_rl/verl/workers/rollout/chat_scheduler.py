@@ -40,13 +40,6 @@ from verl.utils.import_utils import deprecated
 logger = logging.getLogger(__file__)
 
 
-def _short_err_msg(err: Exception, max_len: int = 400) -> str:
-    msg = str(err).replace("\n", " ")
-    if len(msg) > max_len:
-        return msg[:max_len] + "...(truncated)"
-    return msg
-
-
 def _is_context_overflow_error(msg: str) -> bool:
     lowered = (msg or "").lower()
     return "maximum context length" in lowered and "tokens" in lowered
@@ -427,7 +420,7 @@ class ChatCompletionScheduler:
                     else:
                         messages.append({"reward": [0.0]})
                 else:
-                    logger.error("chat completion request failed: %s", _short_err_msg(e))
+                    logger.exception("chat completion request failed")
                     if hasattr(self.completion_callback, "handle_request_error"):
                         await self.completion_callback.handle_request_error(
                             messages=messages,
@@ -443,7 +436,7 @@ class ChatCompletionScheduler:
                 try:
                     await self.completion_callback(messages, completions, info, flag, reward_reference, total_messages)
                 except Exception as e:
-                    logger.exception("completion callback failed: %s", _short_err_msg(e))
+                    logger.exception("completion callback failed")
                     if hasattr(self.completion_callback, "handle_request_error"):
                         await self.completion_callback.handle_request_error(
                             messages=messages,
@@ -561,7 +554,7 @@ class ChatCompletionScheduler:
                 success_ratio,
             )
         except Exception as ratio_err:
-            logger.warning("failed to compute trajectory reward ratio: %s", ratio_err)
+            logger.warning("failed to compute trajectory reward ratio", exc_info=True)
 
         def _reserve_next_dump_path(dump_dir: str, prefix: str = "batch_", suffix: str = ".json"):
             """
@@ -620,7 +613,7 @@ class ChatCompletionScheduler:
                 fh.close()
             print(f"[ChatCompletionScheduler] dumped batch to {path} (records={total})")
         except Exception as dump_err:
-            print(f"[ChatCompletionScheduler] dump batch failed: {dump_err}")
+            logger.exception("dump batch failed")
 
         # === 保存结束 ===
 
