@@ -362,7 +362,11 @@ class ChatCompletionScheduler:
             self.completion_callback = getattr(module, class_name)(config, self)
 
     def _trim_messages_for_max_model_len(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Best-effort trim before request to avoid vLLM context overflow."""
+        """Best-effort trim before request to avoid vLLM context overflow.
+
+        IMPORTANT: keep `messages` object identity unchanged (in-place update),
+        so async recursive submissions always mutate the same shared conversation list.
+        """
         max_model_len = int(getattr(self.config, "max_model_len", 0) or 0)
         if max_model_len <= 0:
             return messages
@@ -384,7 +388,8 @@ class ChatCompletionScheduler:
                 del trimmed[0]
 
         if _num_tokens(trimmed) <= max_model_len:
-            return trimmed
+            messages[:] = trimmed
+            return messages
 
         # Last-resort: truncate the final content payload.
         last = dict(trimmed[-1])
@@ -393,7 +398,8 @@ class ChatCompletionScheduler:
             keep = max(64, len(content) // 4)
             last["content"] = content[-keep:]
             trimmed[-1] = last
-        return trimmed
+        messages[:] = trimmed
+        return messages
 
     def submit_chat_completions(self, *, messages: List[Dict[str, str]], request_id: str, info: Dict[str, Any], flag, reward_reference, total_messages):
         """Submit chat completion request without wait, completion_callback will be called when the request is done.
