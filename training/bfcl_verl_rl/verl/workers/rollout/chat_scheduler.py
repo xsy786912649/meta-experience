@@ -631,6 +631,7 @@ class ChatCompletionScheduler:
             "__done__": done,
             "__depth__": 0,  # indicate how many ongoing completion requests
             "__sampling_params__": sampling_params,
+            "__initial_prompt_len__": len(messages),
         }
 
         self.submit_chat_completions(messages=messages, request_id=request_id, info=info, flag=flag,reward_reference=reward_reference,total_messages=total_messages)
