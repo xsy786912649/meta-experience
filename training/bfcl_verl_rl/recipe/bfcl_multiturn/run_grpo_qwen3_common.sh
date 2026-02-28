@@ -71,5 +71,5 @@ python3 -m verl.trainer.main_ppo \
   trainer.nnodes=1 \
   trainer.default_local_dir="$HOME/checkpoints/$PROJECT_NAME/$EXPERIMENT_NAME" \
   trainer.save_freq=10 \
-  trainer.test_freq=10 \
+  trainer.test_freq=2 \
   trainer.total_epochs="$TOTAL_EPOCHS" "$@"
