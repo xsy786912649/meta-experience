@@ -75,8 +75,12 @@ class BFCLMultiTurnCompletionCallback(ToolCompletionCallback):
         rewards = build_reward_vector(state["assistant_turns"], success=success)
         messages.append({"reward": rewards})
 
-    def _rollback_trailing_users(self, messages: list[dict]) -> None:
-        while messages and messages[-1].get("role") == "user":
+    def _append_first_turn_minimal_assistant(self, messages: list[dict], reason: str) -> None:
+        print(f"[BFCL] first-turn failure, inject minimal assistant message. reason={reason}")
+        messages.append({"role": "assistant", "content": "\n"})
+
+    def _rollback_trailing_users(self, messages: list[dict], min_len: int = 0) -> None:
+        while len(messages) > min_len and messages[-1].get("role") == "user":
             messages.pop()
 
     def _token_len(self, messages: list[dict]) -> int:
@@ -91,12 +95,14 @@ class BFCLMultiTurnCompletionCallback(ToolCompletionCallback):
         error_message: str,
     ) -> None:
         # On context overflow, rollback latest user turn and terminate this trajectory with failure reward.
+        prompt_len = int(info.get("__initial_prompt_len__", 0))
         if error_type == "context_overflow":
-            self._rollback_trailing_users(messages)
+            self._rollback_trailing_users(messages, min_len=prompt_len)
             if "__bfcl_state__" in info:
                 self._finish_episode(messages, info, success=False)
             else:
-                # Overflow may happen before first callback; still ensure terminal reward exists.
+                # First prompt itself overflows before any assistant response is produced.
+                self._append_first_turn_minimal_assistant(messages, reason="prompt_context_overflow")
                 messages.append({"reward": [0.0]})
             return
 
@@ -119,11 +125,14 @@ class BFCLMultiTurnCompletionCallback(ToolCompletionCallback):
         if "__bfcl_state__" not in info:
             self._init_episode(info, payload)
         state = info["__bfcl_state__"]
+        prompt_len = int(info.get("__initial_prompt_len__", 0))
 
         finish_reason = completions.choices[0].finish_reason
         if finish_reason == "length":
             # Incomplete response due to hard length stop: rollback last pending user part and fail this trajectory.
-            self._rollback_trailing_users(messages)
+            self._rollback_trailing_users(messages, min_len=prompt_len)
+            if state["assistant_turns"] == 0:
+                self._append_first_turn_minimal_assistant(messages, reason="first_inference_length_stop")
             self._finish_episode(messages, info, success=False)
             return
 
@@ -192,7 +201,7 @@ class BFCLMultiTurnCompletionCallback(ToolCompletionCallback):
 
         # Case 1: adding next-turn user prompt already exceeds context window.
         if self._token_len(messages) > self.max_model_len:
-            self._rollback_trailing_users(messages)
+            self._rollback_trailing_users(messages, min_len=prompt_len)
             self._finish_episode(messages, info, success=False)
             return
 
