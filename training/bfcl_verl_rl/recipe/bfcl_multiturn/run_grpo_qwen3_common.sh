@@ -15,7 +15,7 @@ PROJECT_NAME=${PROJECT_NAME:-bfcl_multiturn_rl}
 DATA_DIR=${DATA_DIR:-$REPO_ROOT/data/bfcl_multiturn_rl}
 VAL_SPLIT=${VAL_SPLIT:-seen}  # seen | unseen
 NGPU=${NGPU:-8}
-TOTAL_EPOCHS=${TOTAL_EPOCHS:-40}
+TOTAL_EPOCHS=${TOTAL_EPOCHS:-60}
 LR_WARMUP_STEPS_RATIO=${LR_WARMUP_STEPS_RATIO:-0.2}
 TIMESTAMP=$(date "+%Y%m%d_%H%M%S")
 LOG_DIR=${LOG_DIR:-$REPO_ROOT/logs}
@@ -43,7 +43,7 @@ python3 -m verl.trainer.main_ppo \
   data.train_files="$TRAIN_FILES" \
   data.val_files="$VAL_FILES" \
   actor_rollout_ref.model.path="$MODEL_PATH" \
-  actor_rollout_ref.actor.optim.lr=5e-7 \
+  actor_rollout_ref.actor.optim.lr=1e-6 \
   actor_rollout_ref.actor.optim.lr_warmup_steps_ratio="$LR_WARMUP_STEPS_RATIO" \
   actor_rollout_ref.model.use_remove_padding=True \
   actor_rollout_ref.actor.ppo_mini_batch_size=128 \
