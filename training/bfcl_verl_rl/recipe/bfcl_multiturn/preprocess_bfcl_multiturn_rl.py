@@ -107,12 +107,12 @@ def main():
     parser.add_argument("--local_dir", default="data/bfcl_multiturn_rl")
     parser.add_argument("--categories", default=",".join(MULTI_TURN_CATEGORIES))
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--unseen_env_ratio", type=float, default=0.25)
+    parser.add_argument("--unseen_env_ratio", type=float, default=0.15)
     parser.add_argument("--seen_test_ratio", type=float, default=0.2)
     parser.add_argument(
         "--train_size",
         type=int,
-        default=512,
+        default=1000,
         help="Cap train split size. <=0 means no cap.",
     )
     args = parser.parse_args()
