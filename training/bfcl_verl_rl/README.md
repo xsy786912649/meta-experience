@@ -13,7 +13,7 @@ python3 -m recipe.bfcl_multiturn.preprocess_bfcl_multiturn_rl
 默认参数：
 - `local_dir=data/bfcl_multiturn_rl`
 - `seed=42`
-- `unseen_env_ratio=0.15`
+- `unseen_env_ratio=0.14`
 - `seen_test_ratio=0.2`
 - `train_size=1000`
 
