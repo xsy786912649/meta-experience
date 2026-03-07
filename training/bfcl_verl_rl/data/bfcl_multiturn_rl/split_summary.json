@@ -1,0 +1,39 @@
+{
+  "categories": [
+    "multi_turn_base",
+    "multi_turn_miss_param",
+    "multi_turn_miss_func",
+    "multi_turn_long_context"
+  ],
+  "num_total": 800,
+  "num_train": 515,
+  "num_test_seen": 109,
+  "num_test_unseen": 176,
+  "train_size_cap": 1000,
+  "num_seen_envs": 17,
+  "num_unseen_envs": 3,
+  "seen_envs": [
+    "GorillaFileSystem",
+    "GorillaFileSystem|MathAPI",
+    "GorillaFileSystem|MessageAPI",
+    "GorillaFileSystem|TicketAPI",
+    "GorillaFileSystem|TwitterAPI",
+    "MathAPI|TravelAPI",
+    "MathAPI|VehicleControlAPI",
+    "MessageAPI|TradingBot",
+    "MessageAPI|TravelAPI",
+    "MessageAPI|VehicleControlAPI",
+    "TicketAPI|TradingBot",
+    "TicketAPI|TravelAPI",
+    "TicketAPI|VehicleControlAPI",
+    "TradingBot|TwitterAPI",
+    "TravelAPI",
+    "TravelAPI|TwitterAPI",
+    "TwitterAPI|VehicleControlAPI"
+  ],
+  "unseen_envs": [
+    "MathAPI|TradingBot",
+    "TradingBot",
+    "VehicleControlAPI"
+  ]
+}
