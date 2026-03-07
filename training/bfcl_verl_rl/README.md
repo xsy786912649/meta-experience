@@ -78,4 +78,4 @@ bash recipe/bfcl_multiturn/run_eval_split.sh \
 ## 4) 日志与保存路径
 
 - 训练日志：`<REPO_ROOT>/logs/`
-- checkpoint：`$HOME/checkpoints/$PROJECT_NAME/$EXPERIMENT_NAME`
+- checkpoint：`<REPO_ROOT>/checkpoints//`

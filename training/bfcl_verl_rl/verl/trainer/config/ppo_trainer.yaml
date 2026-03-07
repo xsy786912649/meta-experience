@@ -1082,7 +1082,7 @@ trainer:
   del_local_ckpt_after_load: False
 
   # Default local directory for saving checkpoints
-  default_local_dir: /ebs-basemodeling/siyuanxu/tool_synthetic/RL_training/verl_output/checkpoints/${trainer.project_name}/${trainer.experiment_name}
+  default_local_dir: checkpoints//
 
   # Maximum number of actor checkpoints to keep
   max_actor_ckpt_to_keep: null
