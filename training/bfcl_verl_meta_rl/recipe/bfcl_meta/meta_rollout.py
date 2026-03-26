@@ -63,10 +63,15 @@ class MetaRolloutEngine:
         temperature: float,
         experience_summary: str | None,
         max_model_len: int | None = None,
+        exploration_mode: bool = False,
     ) -> dict[str, Any]:
         effective_max_model_len = int(max_model_len) if max_model_len is not None else self.max_model_len
         run_namespace = f"meta_{uuid.uuid4().hex[:10]}"
-        system_prompt = build_task_system_prompt(payload["function"], experience_summary=experience_summary)
+        system_prompt = build_task_system_prompt(
+            payload["function"],
+            experience_summary=experience_summary,
+            exploration_mode=exploration_mode,
+        )
         messages = [{"role": "system", "content": system_prompt}]
         system_prompt_len = len(messages)
         inference_log: list[Any] = []

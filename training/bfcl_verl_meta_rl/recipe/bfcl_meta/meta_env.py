@@ -13,6 +13,11 @@ SUMMARY_SYSTEM_PROMPT = (
     "Keep the memo concise, concrete, and action-oriented. Light structure is fine, but do not force a rigid schema."
 )
 
+SUPPORT_EXPLORATION_PREFIX = (
+    "This is an early attempt in a new tool-calling environment. "
+    "Try to solve the task, but also use careful exploration to learn tool behavior, constraints, and failure modes.\n\n"
+)
+
 
 def _make_json_serializable(value):
     if isinstance(value, dict):
@@ -26,8 +31,14 @@ def _make_json_serializable(value):
         return str(value)
 
 
-def build_task_system_prompt(tools: list[dict], experience_summary: str | None = None) -> str:
+def build_task_system_prompt(
+    tools: list[dict],
+    experience_summary: str | None = None,
+    exploration_mode: bool = False,
+) -> str:
     base_prompt = build_system_prompt_with_tools(tools)
+    if exploration_mode:
+        base_prompt = SUPPORT_EXPLORATION_PREFIX + base_prompt
     if not experience_summary:
         return base_prompt
     return (

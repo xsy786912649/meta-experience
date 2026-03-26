@@ -75,6 +75,7 @@ async def main_async(args):
         temperature=args.support_temperature,
         experience_summary=None,
         max_model_len=args.support_max_model_len,
+        exploration_mode=True,
     )
     summary_messages = build_summary_prompt_messages(
         tokenizer=tokenizer,

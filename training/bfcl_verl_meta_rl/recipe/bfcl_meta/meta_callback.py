@@ -82,6 +82,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             temperature=SUPPORT_TEMPERATURE,
             experience_summary=None,
             max_model_len=self.support_max_model_len,
+            exploration_mode=True,
         )
         summary_messages = build_summary_prompt_messages(
             tokenizer=self.tokenizer,
