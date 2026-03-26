@@ -55,6 +55,9 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             self.max_model_len - response_length - self.summary_safety_margin,
         )
         self._prepared_samples: dict[str, dict[str, Any]] = {}
+        self._direct_server_addresses = [address for _, address in scheduler.weighted_addresses]
+        self._direct_request_counter = 0
+        self._direct_request_lock = asyncio.Lock()
         self.rollout_engine = MetaRolloutEngine(
             tokenizer=self.tokenizer,
             chat_fn=self._chat_once,
@@ -146,7 +149,11 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             self._prepared_samples.pop(payload["meta_instance_id"], None)
 
     async def _chat_once(self, messages: list[dict[str, str]], temperature: float):
-        address = self.scheduler.weighted_addresses[0][1]
+        async with self._direct_request_lock:
+            address = self._direct_server_addresses[
+                self._direct_request_counter % len(self._direct_server_addresses)
+            ]
+            self._direct_request_counter += 1
         sampling_params = {
             "model": self.scheduler.model_name,
             "temperature": temperature,
