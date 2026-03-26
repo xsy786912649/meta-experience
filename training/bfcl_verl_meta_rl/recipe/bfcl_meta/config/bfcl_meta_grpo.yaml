@@ -9,8 +9,8 @@ defaults:
 data:
   max_prompt_length: 29696
   max_response_length: 2048
-  train_batch_size: 64
-  val_batch_size: 64
+  train_batch_size: 256
+  val_batch_size: 128
   truncation: error
   return_raw_chat: true
   filter_overlong_prompts: false
@@ -25,7 +25,7 @@ actor_rollout_ref:
     response_length: 2048
     max_model_len: 32768
     n: 8
-    gpu_memory_utilization: 0.5
+    gpu_memory_utilization: 0.65
     multi_turn:
       enable: true
       max_assistant_turns: 50
