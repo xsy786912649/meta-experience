@@ -14,6 +14,18 @@ SUMMARY_SYSTEM_PROMPT = (
 )
 
 
+def _make_json_serializable(value):
+    if isinstance(value, dict):
+        return {k: _make_json_serializable(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_make_json_serializable(item) for item in value]
+    try:
+        json.dumps(value, ensure_ascii=False)
+        return value
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def build_task_system_prompt(tools: list[dict], experience_summary: str | None = None) -> str:
     base_prompt = build_system_prompt_with_tools(tools)
     if not experience_summary:
@@ -49,9 +61,11 @@ def snapshot_state_items(involved_instances: dict[str, Any]) -> list[dict]:
             {
                 "role": "state_info",
                 "class_name": class_name,
-                "content": {
-                    key: deepcopy(value) for key, value in vars(class_instance).items() if not key.startswith("_")
-                },
+                "content": _make_json_serializable(
+                    {
+                        key: deepcopy(value) for key, value in vars(class_instance).items() if not key.startswith("_")
+                    }
+                ),
             }
         )
     return state_items
@@ -185,7 +199,7 @@ def _format_state_items(state_items: list[dict]) -> str:
         payload.append(
             {
                 "class_name": item.get("class_name"),
-                "content": item.get("content"),
+                "content": _make_json_serializable(item.get("content")),
             }
         )
     return f"<|im_start|>state_info\n{json.dumps(payload, ensure_ascii=False)}\n<|im_end|>\n"
