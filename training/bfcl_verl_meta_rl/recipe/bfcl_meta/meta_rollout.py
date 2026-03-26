@@ -3,6 +3,7 @@ import uuid
 from typing import Any, Awaitable, Callable
 
 from recipe.bfcl_meta.meta_env import (
+    _make_json_serializable,
     build_task_system_prompt,
     build_trajectory_text,
     extract_summary_context_text,
@@ -218,6 +219,7 @@ class MetaRolloutEngine:
         )
         if force_quit and checker.get("valid"):
             checker = {"valid": False, "error_type": "meta:forced_stop"}
+        checker = _make_json_serializable(checker)
 
         return {
             "success": bool(checker.get("valid")),

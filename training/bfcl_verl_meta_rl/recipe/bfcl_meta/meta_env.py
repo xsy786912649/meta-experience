@@ -87,8 +87,8 @@ def summarize_checker_result(checker: dict[str, Any]) -> str:
             diff_items = []
             for attr_name, diff in list(differences.items())[:5]:
                 diff_items.append(
-                    f"{attr_name}: model={json.dumps(diff.get('model', ''), ensure_ascii=False)} "
-                    f"vs ground_truth={json.dumps(diff.get('ground_truth', ''), ensure_ascii=False)}"
+                    f"{attr_name}: model={json.dumps(_make_json_serializable(diff.get('model', '')), ensure_ascii=False)} "
+                    f"vs ground_truth={json.dumps(_make_json_serializable(diff.get('ground_truth', '')), ensure_ascii=False)}"
                 )
             lines.append("Important state mismatches: " + "; ".join(diff_items))
     elif error_type == "multi_turn:execution_response_mismatch":
@@ -101,7 +101,7 @@ def summarize_checker_result(checker: dict[str, Any]) -> str:
     elif error_type == "multi_turn:empty_turn_model_response":
         lines.append("At least one turn that required tool use ended with an empty model action.")
     elif details:
-        lines.append(json.dumps(details, ensure_ascii=False)[:600])
+        lines.append(json.dumps(_make_json_serializable(details), ensure_ascii=False)[:600])
 
     return "\n".join(lines)
 
