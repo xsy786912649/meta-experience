@@ -550,17 +550,27 @@ class ChatCompletionScheduler:
                 ) from e
             # Print per-trajectory reward for quick online debugging.
             logger.info("trajectory_reward sample=%s reward=%s", i, reward)
+            print(f"[ChatCompletionScheduler] trajectory_reward sample={i} reward={reward}")
 
         # Print batch-level reward ratio (final-step reward > 0 means success).
         try:
             success_cnt = sum(1 for r in batch_reward if isinstance(r, (list, tuple)) and len(r) > 0 and float(r[-1]) > 0.0)
             total_cnt = len(batch_reward)
             success_ratio = (success_cnt / total_cnt) if total_cnt > 0 else 0.0
+            reward_values = [
+                float(r[-1]) for r in batch_reward if isinstance(r, (list, tuple)) and len(r) > 0
+            ]
+            reward_mean = (sum(reward_values) / len(reward_values)) if reward_values else 0.0
             logger.info(
-                "trajectory_reward_ratio success=%s total=%s ratio=%.4f",
+                "trajectory_reward_ratio success=%s total=%s ratio=%.4f reward_mean=%.4f",
                 success_cnt,
                 total_cnt,
                 success_ratio,
+                reward_mean,
+            )
+            print(
+                f"[ChatCompletionScheduler] trajectory_reward_ratio "
+                f"success={success_cnt} total={total_cnt} ratio={success_ratio:.4f} reward_mean={reward_mean:.4f}"
             )
         except Exception as ratio_err:
             logger.warning("failed to compute trajectory reward ratio", exc_info=True)
