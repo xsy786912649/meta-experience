@@ -5,7 +5,7 @@ import numpy as np
 
 def _normalize_reward(extra_info):
     if extra_info is None:
-        return [0.0]
+        return [-0.001]
 
     if isinstance(extra_info, np.ndarray):
         if extra_info.ndim == 0:
@@ -18,7 +18,7 @@ def _normalize_reward(extra_info):
     if isinstance(extra_info, Number):
         return [float(extra_info)]
 
-    return [0.0]
+    return [-0.001]
 
 
 def compute_score(data_source, solution_str, ground_truth, extra_info):

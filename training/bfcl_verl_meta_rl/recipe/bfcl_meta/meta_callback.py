@@ -112,7 +112,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         payload = total_messages if isinstance(total_messages, dict) else json.loads(total_messages)
         prepared = self._prepared_samples.get(payload["meta_instance_id"])
         messages.append({"role": "assistant", "content": ""})
-        messages.append({"reward": [0.0]})
+        messages.append({"reward": [-0.001]})
         if prepared is not None:
             prepared["remaining"] -= 1
             if prepared["remaining"] <= 0:
@@ -133,14 +133,14 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         full_output, summary_context_text = parse_summary_generation(completions)
         messages.append({"role": "assistant", "content": full_output})
 
-        reward = 0.0
+        reward = -0.001
         if summary_context_text:
             query_result = await self.rollout_engine.run_task_rollout(
                 payload=payload["query"],
                 temperature=QUERY_TEMPERATURE,
                 experience_summary=summary_context_text,
             )
-            reward = 1.0 if query_result["success"] else 0.0
+            reward = 1.0 if query_result["success"] else -0.001
 
         messages.append({"reward": [reward]})
 
