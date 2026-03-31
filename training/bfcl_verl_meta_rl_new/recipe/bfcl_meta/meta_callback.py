@@ -243,33 +243,64 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             tokenize=True,
             add_generation_prompt=True,
         )
-        full_ids = self.tokenizer.apply_chat_template(
-            conversation,
-            tokenize=True,
-            add_generation_prompt=False,
-        )
-        response_ids = full_ids[len(prompt_ids):]
-
+        response_ids: list[int] = []
         response_mask = []
-        previous_prefix_ids = prompt_ids
-        for end_idx in range(prompt_message_count + 1, len(conversation) + 1):
-            prefix_ids = self.tokenizer.apply_chat_template(
-                conversation[:end_idx],
-                tokenize=True,
+        for message_idx in range(prompt_message_count, len(conversation)):
+            prev_messages = conversation[:message_idx]
+            cur_messages = conversation[: message_idx + 1]
+            role = conversation[message_idx].get("role")
+            include_assistant_content = role == "assistant" and (
+                pipeline_mode == PIPELINE_FULL or message_idx == len(conversation) - 1
+            )
+
+            prev_text = self.tokenizer.apply_chat_template(
+                prev_messages,
+                tokenize=False,
                 add_generation_prompt=False,
             )
-            segment_len = len(prefix_ids) - len(previous_prefix_ids)
-            role = conversation[end_idx - 1].get("role")
-            include_segment = role == "assistant" and (
-                pipeline_mode == PIPELINE_FULL or end_idx - 1 == len(conversation) - 1
+            cur_text = self.tokenizer.apply_chat_template(
+                cur_messages,
+                tokenize=False,
+                add_generation_prompt=False,
             )
-            response_mask.extend([1.0 if include_segment else 0.0] * max(segment_len, 0))
-            previous_prefix_ids = prefix_ids
+
+            if role == "assistant":
+                prev_text_with_generation_prompt = self.tokenizer.apply_chat_template(
+                    prev_messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+
+                if message_idx == prompt_message_count:
+                    segment_text = cur_text[len(prev_text_with_generation_prompt) :]
+                    segment_tokens = self.tokenizer.encode(segment_text, add_special_tokens=False)
+                    response_ids.extend(segment_tokens)
+                    response_mask.extend([1.0 if include_assistant_content else 0.0] * len(segment_tokens))
+                else:
+                    generation_prompt_text = prev_text_with_generation_prompt[len(prev_text) :]
+                    generation_prompt_tokens = self.tokenizer.encode(
+                        generation_prompt_text,
+                        add_special_tokens=False,
+                    )
+                    message_tokens = self.tokenizer.encode(
+                        cur_text[len(prev_text_with_generation_prompt) :],
+                        add_special_tokens=False,
+                    )
+                    response_ids.extend(generation_prompt_tokens)
+                    response_mask.extend([0.0] * len(generation_prompt_tokens))
+                    response_ids.extend(message_tokens)
+                    response_mask.extend([1.0 if include_assistant_content else 0.0] * len(message_tokens))
+            else:
+                segment_text = cur_text[len(prev_text) :]
+                segment_tokens = self.tokenizer.encode(segment_text, add_special_tokens=False)
+                response_ids.extend(segment_tokens)
+                response_mask.extend([0.0] * len(segment_tokens))
 
         if len(response_mask) != len(response_ids):
             raise ValueError(
                 f"Response mask/token mismatch for pipeline={pipeline_mode}: "
-                f"{len(response_mask)=} vs {len(response_ids)=}"
+                f"{len(response_mask)=} vs {len(response_ids)=}, "
+                f"{prompt_message_count=}, {len(conversation)=}"
             )
 
         return prompt_ids, response_ids, response_mask
