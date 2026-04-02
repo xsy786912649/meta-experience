@@ -177,7 +177,18 @@ class MetaRolloutEngine:
                     force_quit = True
                     break
 
-                decoded_calls = decode_tool_calls(content)
+                try:
+                    decoded_calls = decode_tool_calls(content)
+                except Exception as exc:
+                    step_events.append(
+                        {
+                            "role": "handler_log",
+                            "content": "Malformed tool call detected during support/query rollout.",
+                            "error": str(exc),
+                        }
+                    )
+                    force_quit = True
+                    break
                 if not decoded_calls:
                     break
 
