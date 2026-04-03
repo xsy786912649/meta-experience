@@ -33,8 +33,8 @@ actor_rollout_ref:
       summary_safety_margin: 1024
       pipeline_mode: phased
       val_pipeline_mode: summary_only
-      summary_phase_epochs: 3
-      support_phase_epochs: 1
+  summary_phase_epochs: 2
+  support_phase_epochs: 1
       tool_config_path: null
       completion_callback: recipe.bfcl_meta.meta_callback.BFCLMetaCompletionCallback
       format: hermes
