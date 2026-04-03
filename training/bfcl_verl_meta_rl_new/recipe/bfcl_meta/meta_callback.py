@@ -17,7 +17,7 @@ from recipe.bfcl_meta.meta_env import build_summary_prompt_messages
 from recipe.bfcl_meta.meta_rollout import MetaRolloutEngine, parse_summary_generation
 
 SUPPORT_TEMPERATURE = 1.0
-QUERY_TEMPERATURE = 0.2
+QUERY_TEMPERATURE = 0.0
 
 PIPELINE_SUMMARY = "summary_only"
 PIPELINE_SUPPORT = "support_only"

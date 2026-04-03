@@ -21,7 +21,7 @@ from recipe.bfcl_multiturn.bfcl_completion_callback import (
 )
 
 SUPPORT_TEMPERATURE = 1.0
-QUERY_TEMPERATURE = 0.2
+QUERY_TEMPERATURE = 0.0
 
 
 def _keep_last_token(mask: torch.Tensor) -> torch.Tensor:
