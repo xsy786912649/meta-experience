@@ -7,7 +7,7 @@ defaults:
   - _self_
 
 data:
-  max_prompt_length: 29696
+  max_prompt_length: 13312
   max_response_length: 2048
   train_batch_size: 256
   val_batch_size: 128
@@ -21,15 +21,15 @@ data:
 actor_rollout_ref:
   rollout:
     mode: async
-    prompt_length: 29696
+    prompt_length: 13312
     response_length: 2048
-    max_model_len: 32768
+    max_model_len: 16384
     n: 8
     gpu_memory_utilization: 0.7
     multi_turn:
       enable: true
       max_assistant_turns: 50
-      support_max_model_len: 28672
+      support_max_model_len: 14336
       summary_safety_margin: 1024
       pipeline_mode: phased
       val_pipeline_mode: summary_only

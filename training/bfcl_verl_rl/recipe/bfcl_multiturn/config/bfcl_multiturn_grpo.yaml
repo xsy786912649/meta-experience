@@ -21,9 +21,9 @@ data:
 actor_rollout_ref:
   rollout:
     mode: async
-    prompt_length: 32768
-    response_length: 8192
-    max_model_len: 32768
+    prompt_length: 16384
+    response_length: 4096
+    max_model_len: 16384
     n: 8
     gpu_memory_utilization: 0.65
     multi_turn:

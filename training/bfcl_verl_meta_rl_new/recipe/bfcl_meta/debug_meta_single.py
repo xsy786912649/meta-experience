@@ -125,10 +125,10 @@ def main():
     parser.add_argument("--support-temperature", type=float, default=1.0)
     parser.add_argument("--summary-temperature", type=float, default=1.0)
     parser.add_argument("--query-temperature", type=float, default=0.0)
-    parser.add_argument("--max-model-len", type=int, default=32768)
-    parser.add_argument("--support-max-model-len", type=int, default=28672)
+    parser.add_argument("--max-model-len", type=int, default=16384)
+    parser.add_argument("--support-max-model-len", type=int, default=14336)
     parser.add_argument("--max-assistant-turns", type=int, default=50)
-    parser.add_argument("--summary-prompt-budget", type=int, default=29696)
+    parser.add_argument("--summary-prompt-budget", type=int, default=13312)
     args = parser.parse_args()
     asyncio.run(main_async(args))
 
