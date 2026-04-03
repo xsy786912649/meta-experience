@@ -1,21 +1,38 @@
 # BFCL Meta RL
 
-This recipe trains a meta-summarizer with two alternating pipelines.
+This recipe trains a mixed meta-RL policy with two pipelines that share the same pair data.
 
-Each training sample is a same-environment pair `(support_task, query_task)`:
+Each training sample is a same-environment pair `(support_task, query_task)`.
 
-1. Run the current policy on the support task and keep the support conversation.
-2. Append a summarize request to that support conversation.
+Training uses a phased epoch schedule:
+
+- `summary_only` for 3 epochs
+- `support_only` for 1 epoch
+
+Both pipelines use the original compressed-summary prompt style from `bfcl_meta_rl`:
+
+1. Roll out a support task.
+2. Compress the support trajectory into a standalone summarize prompt.
 3. Generate an environment experience memo.
 4. Inject the memo into the query task system prompt.
-5. Run the current policy on the query task and use query success as reward.
+5. Run the query task and use query success as reward.
 
-The training alternates by batch between:
+Pipeline details:
 
-- shared-support-summary: one support trajectory is shared across `rollout.n` summaries, and loss only covers summary tokens
-- full-support-summary: `rollout.n` independent support trajectories are sampled, each followed by one summary, and loss covers both support assistant actions and summary tokens
+- `summary_only`
+  - one shared support rollout
+  - `rollout.n` summaries on the compressed summary prompt
+  - loss only on summary tokens
+- `support_only`
+  - `rollout.n` independent support rollouts
+  - each support rollout is compressed into one summary prompt
+  - each summary is used to validate on the same query task
+  - loss only on support assistant action tokens
+  - summary tokens do not contribute to loss and only serve as the reward bridge
 
-For `rollout.n = 8`, the query task is shared within a GRPO group.
+This `3+1` epoch schedule then repeats if training continues beyond 4 epochs.
+
+Validation and test use `summary_only` logic, so evaluation follows the same compressed-summary pipeline as the original `bfcl_meta_rl`.
 
 ## Data Split Semantics
 
@@ -48,7 +65,7 @@ python3 recipe/bfcl_meta/preprocess_bfcl_meta_pairs.py \
 
 ### 2. Single-Sample Debug
 
-Runs one support-summary-query chain and prints:
+Runs one support-summary-query chain with the compressed summary prompt and prints:
 
 - support trajectory
 - summary full output
@@ -97,6 +114,8 @@ bash recipe/bfcl_meta/run_meta_eval.sh
 ```
 
 Use `SPLIT=unseen` to evaluate unseen environments.
+
+Evaluation follows the config default `val_pipeline_mode=summary_only`, so test-time behavior matches the compressed-summary pipeline rather than the mixed `3:1` training schedule.
 
 ### 5. Merge Checkpoint To HF Model
 

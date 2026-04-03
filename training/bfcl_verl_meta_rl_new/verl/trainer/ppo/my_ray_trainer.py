@@ -1213,6 +1213,7 @@ class RayPPOTrainer:
                 metrics = {}
                 timing_raw = {}
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
+                batch.meta_info["train_epoch"] = epoch
 
                 # batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
                 # non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]
@@ -1242,6 +1243,7 @@ class RayPPOTrainer:
                     batch_keys=batch_keys_to_pop,
                     non_tensor_batch_keys=non_tensor_batch_keys_to_pop,
                 )
+                gen_batch.meta_info["train_epoch"] = epoch
 
                 if repeat_sampling_sglang_grpo:
                     uids_for_prompts = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))], dtype=object)

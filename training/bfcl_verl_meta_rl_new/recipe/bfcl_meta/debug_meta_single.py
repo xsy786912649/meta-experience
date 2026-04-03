@@ -50,7 +50,7 @@ async def main_async(args):
         data_file = repo_root / data_file
 
     sys.path.insert(0, str(repo_root))
-    from recipe.bfcl_meta.meta_env import build_summary_append_user_message
+    from recipe.bfcl_meta.meta_env import build_summary_prompt_messages
     from recipe.bfcl_meta.meta_rollout import MetaRolloutEngine, parse_summary_generation
     from verl.utils import hf_tokenizer
 
@@ -77,12 +77,13 @@ async def main_async(args):
         max_model_len=args.support_max_model_len,
         exploration_mode=True,
     )
-    summary_messages = support_result["conversation"] + [
-        build_summary_append_user_message(
-            support_success=support_result["success"],
-            checker=support_result["checker"],
-        )
-    ]
+    summary_messages = build_summary_prompt_messages(
+        tokenizer=tokenizer,
+        trajectory_text=support_result["trajectory_text"],
+        support_success=support_result["success"],
+        checker=support_result["checker"],
+        max_prompt_tokens=args.summary_prompt_budget,
+    )
     summary_completion = await chat_fn(summary_messages, args.summary_temperature)
     summary_full_output, summary_context_text = parse_summary_generation(summary_completion)
     query_result = await engine.run_task_rollout(
@@ -99,7 +100,7 @@ async def main_async(args):
     print(json.dumps(support_result["checker"], ensure_ascii=False, indent=2))
     print("=== support_trajectory ===")
     print(support_result["trajectory_text"])
-    print("=== summary_conversation_before_generation ===")
+    print("=== summary_prompt ===")
     print(tokenizer.apply_chat_template(summary_messages, tokenize=False, add_generation_prompt=True))
     print("=== summary_full_output ===")
     print(summary_full_output)
@@ -127,6 +128,7 @@ def main():
     parser.add_argument("--max-model-len", type=int, default=32768)
     parser.add_argument("--support-max-model-len", type=int, default=28672)
     parser.add_argument("--max-assistant-turns", type=int, default=50)
+    parser.add_argument("--summary-prompt-budget", type=int, default=29696)
     args = parser.parse_args()
     asyncio.run(main_async(args))
 

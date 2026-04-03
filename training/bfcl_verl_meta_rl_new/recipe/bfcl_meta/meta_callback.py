@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import hashlib
 import json
 import uuid
 from typing import Any
@@ -12,15 +13,15 @@ from tensordict import TensorDict
 from verl.protocol import DataProto
 from verl.workers.rollout.chat_scheduler import ChatCompletionScheduler, ToolCompletionCallback
 
-from recipe.bfcl_meta.meta_env import build_summary_append_user_message
+from recipe.bfcl_meta.meta_env import build_summary_prompt_messages
 from recipe.bfcl_meta.meta_rollout import MetaRolloutEngine, parse_summary_generation
 
 SUPPORT_TEMPERATURE = 1.0
 QUERY_TEMPERATURE = 0.2
 
-PIPELINE_SHARED = "shared_support_summary"
-PIPELINE_FULL = "full_support_summary"
-PIPELINE_ALTERNATING = "alternating"
+PIPELINE_SUMMARY = "summary_only"
+PIPELINE_SUPPORT = "support_only"
+PIPELINE_PHASED = "phased"
 
 
 def _keep_last_token(mask: torch.Tensor) -> torch.Tensor:
@@ -49,14 +50,25 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
                 max(2048, self.max_model_len - response_length - 1024),
             )
         )
+        self.summary_prompt_budget = max(
+            2048,
+            self.max_model_len - response_length - self.summary_safety_margin,
+        )
         self.train_pipeline_mode = str(
-            config.actor_rollout_ref.rollout.multi_turn.get("pipeline_mode", PIPELINE_ALTERNATING)
+            config.actor_rollout_ref.rollout.multi_turn.get("pipeline_mode", PIPELINE_PHASED)
         )
         self.val_pipeline_mode = str(
-            config.actor_rollout_ref.rollout.multi_turn.get("val_pipeline_mode", PIPELINE_SHARED)
+            config.actor_rollout_ref.rollout.multi_turn.get("val_pipeline_mode", PIPELINE_SUMMARY)
         )
-        self._prepare_counter = 0
+        self.summary_phase_epochs = int(
+            config.actor_rollout_ref.rollout.multi_turn.get("summary_phase_epochs", 3)
+        )
+        self.support_phase_epochs = int(
+            config.actor_rollout_ref.rollout.multi_turn.get("support_phase_epochs", 1)
+        )
         self._prepared_samples: dict[str, dict[str, Any]] = {}
+        self._prepared_requests: dict[str, list[dict[str, Any]]] = {}
+        self._prepared_request_lock = asyncio.Lock()
         self._direct_server_addresses = [address for _, address in scheduler.weighted_addresses]
         self._direct_request_counter = 0
         self._direct_request_lock = asyncio.Lock()
@@ -69,25 +81,42 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
 
     def _select_batch_mode(self, validate: bool) -> str:
         requested = self.val_pipeline_mode if validate else self.train_pipeline_mode
-        if requested == PIPELINE_ALTERNATING:
-            mode = PIPELINE_SHARED if self._prepare_counter % 2 == 0 else PIPELINE_FULL
-            self._prepare_counter += 1
-            return mode
-        if requested in {PIPELINE_SHARED, PIPELINE_FULL}:
+        if requested == PIPELINE_PHASED:
+            summary_epochs = max(self.summary_phase_epochs, 0)
+            support_epochs = max(self.support_phase_epochs, 0)
+            cycle_len = summary_epochs + support_epochs
+            if cycle_len <= 0:
+                return PIPELINE_SUMMARY
+            current_epoch = int(getattr(self, "_current_train_epoch", 0))
+            cycle_epoch = current_epoch % cycle_len
+            return PIPELINE_SUMMARY if cycle_epoch < summary_epochs else PIPELINE_SUPPORT
+        if requested in {PIPELINE_SUMMARY, PIPELINE_SUPPORT}:
             return requested
         raise ValueError(f"Unsupported bfcl_meta pipeline mode: {requested}")
 
-    def _append_summary_request(
-        self,
-        support_conversation: list[dict[str, str]],
-        support_success: bool,
-        checker: dict[str, Any],
-    ) -> list[dict[str, str]]:
-        conversation = copy.deepcopy(support_conversation)
-        conversation.append(build_summary_append_user_message(support_success=support_success, checker=checker))
-        return conversation
+    @staticmethod
+    def _conversation_key(messages: list[dict[str, str]]) -> str:
+        payload = json.dumps(messages, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+    async def _register_prepared_request(self, messages: list[dict[str, str]], metadata: dict[str, Any]) -> None:
+        key = self._conversation_key(messages)
+        async with self._prepared_request_lock:
+            self._prepared_requests.setdefault(key, []).append(metadata)
+
+    async def _consume_prepared_request(self, messages: list[dict[str, str]]) -> dict[str, Any] | None:
+        key = self._conversation_key(messages)
+        async with self._prepared_request_lock:
+            queue = self._prepared_requests.get(key)
+            if not queue:
+                return None
+            metadata = queue.pop(0)
+            if not queue:
+                self._prepared_requests.pop(key, None)
+            return metadata
 
     async def prepare_batch_conversations(self, batch: DataProto, n: int) -> list[list[dict[str, str]]]:
+        self._current_train_epoch = int(batch.meta_info.get("train_epoch", 0))
         batch_mode = self._select_batch_mode(validate=bool(batch.meta_info.get("validate", False)))
         batch.non_tensor_batch["pipeline_mode"] = np.array([batch_mode] * len(batch), dtype=object)
 
@@ -97,20 +126,17 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             for payload in batch.non_tensor_batch["total_messages"]
         ]
 
-        if batch_mode == PIPELINE_SHARED:
-            results = await asyncio.gather(*(self._prepare_shared_payload(payload, repeat_count=n) for payload in payloads))
+        if batch_mode == PIPELINE_SUMMARY:
+            results = await asyncio.gather(*(self._prepare_summary_payload(payload, repeat_count=n) for payload in payloads))
         else:
-            results = await asyncio.gather(*(self._prepare_full_payload(payload, repeat_count=n) for payload in payloads))
+            results = await asyncio.gather(*(self._prepare_support_payload(payload, repeat_count=n) for payload in payloads))
 
         for result in results:
-            self._prepared_samples[result["meta_instance_id"]] = {
-                "remaining": result["remaining"],
-                "pipeline_mode": batch_mode,
-            }
+            self._prepared_samples[result["meta_instance_id"]] = {"remaining": result["remaining"]}
             prepared.extend(result["conversations"])
         return prepared
 
-    async def _prepare_shared_payload(self, payload: dict[str, Any], repeat_count: int) -> dict[str, Any]:
+    async def _prepare_summary_payload(self, payload: dict[str, Any], repeat_count: int) -> dict[str, Any]:
         support_result = await self.rollout_engine.run_task_rollout(
             payload=payload["support"],
             temperature=SUPPORT_TEMPERATURE,
@@ -118,18 +144,31 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             max_model_len=self.support_max_model_len,
             exploration_mode=True,
         )
-        summary_conversation = self._append_summary_request(
-            support_conversation=support_result["conversation"],
+        summary_messages = build_summary_prompt_messages(
+            tokenizer=self.tokenizer,
+            trajectory_text=support_result["trajectory_text"],
             support_success=support_result["success"],
             checker=support_result["checker"],
+            max_prompt_tokens=self.summary_prompt_budget,
         )
+        conversations = []
+        for _ in range(repeat_count):
+            prepared_conversation = copy.deepcopy(summary_messages)
+            await self._register_prepared_request(
+                prepared_conversation,
+                {
+                    "pipeline_mode": PIPELINE_SUMMARY,
+                    "meta_instance_id": payload["meta_instance_id"],
+                },
+            )
+            conversations.append(prepared_conversation)
         return {
             "meta_instance_id": payload["meta_instance_id"],
-            "conversations": [copy.deepcopy(summary_conversation) for _ in range(repeat_count)],
+            "conversations": conversations,
             "remaining": repeat_count,
         }
 
-    async def _prepare_full_payload(self, payload: dict[str, Any], repeat_count: int) -> dict[str, Any]:
+    async def _prepare_support_payload(self, payload: dict[str, Any], repeat_count: int) -> dict[str, Any]:
         support_results = await asyncio.gather(
             *(
                 self.rollout_engine.run_task_rollout(
@@ -143,13 +182,24 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             )
         )
         conversations = [
-            self._append_summary_request(
-                support_conversation=result["conversation"],
+            build_summary_prompt_messages(
+                tokenizer=self.tokenizer,
+                trajectory_text=result["trajectory_text"],
                 support_success=result["success"],
                 checker=result["checker"],
+                max_prompt_tokens=self.summary_prompt_budget,
             )
             for result in support_results
         ]
+        for prepared_conversation, support_result in zip(conversations, support_results):
+            await self._register_prepared_request(
+                prepared_conversation,
+                {
+                    "pipeline_mode": PIPELINE_SUPPORT,
+                    "meta_instance_id": payload["meta_instance_id"],
+                    "support_conversation": copy.deepcopy(support_result["conversation"]),
+                },
+            )
         return {
             "meta_instance_id": payload["meta_instance_id"],
             "conversations": conversations,
@@ -166,6 +216,9 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
     ) -> None:
         payload = total_messages if isinstance(total_messages, dict) else json.loads(total_messages)
         prepared = self._prepared_samples.get(payload["meta_instance_id"])
+        request_meta = await self._consume_prepared_request(messages)
+        if request_meta and request_meta.get("pipeline_mode") == PIPELINE_SUPPORT:
+            messages[:] = copy.deepcopy(request_meta["support_conversation"])
         messages.append({"role": "assistant", "content": ""})
         messages.append({"reward": [-0.001]})
         if prepared is not None:
@@ -184,9 +237,10 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
     ):
         payload = total_messages if isinstance(total_messages, dict) else json.loads(total_messages)
         prepared = self._prepared_samples[payload["meta_instance_id"]]
+        request_meta = await self._consume_prepared_request(messages)
+        pipeline_mode = request_meta["pipeline_mode"] if request_meta else PIPELINE_SUMMARY
 
         full_output, summary_context_text = parse_summary_generation(completions)
-        messages.append({"role": "assistant", "content": full_output})
 
         reward = -0.001
         if summary_context_text:
@@ -197,6 +251,10 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             )
             reward = 1.0 if query_result["success"] else -0.001
 
+        if pipeline_mode == PIPELINE_SUPPORT and request_meta is not None:
+            messages[:] = copy.deepcopy(request_meta["support_conversation"])
+        else:
+            messages.append({"role": "assistant", "content": full_output})
         messages.append({"reward": [reward]})
 
         prepared["remaining"] -= 1
@@ -223,7 +281,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         )
 
     def _get_prompt_message_count(self, conversation: list[dict[str, str]], pipeline_mode: str) -> int:
-        if pipeline_mode == PIPELINE_SHARED:
+        if pipeline_mode == PIPELINE_SUMMARY:
             return max(1, len(conversation) - 1)
         for idx, message in enumerate(conversation):
             if message.get("role") == "assistant":
@@ -250,7 +308,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             cur_messages = conversation[: message_idx + 1]
             role = conversation[message_idx].get("role")
             include_assistant_content = role == "assistant" and (
-                pipeline_mode == PIPELINE_FULL or message_idx == len(conversation) - 1
+                pipeline_mode == PIPELINE_SUPPORT or message_idx == len(conversation) - 1
             )
 
             prev_text = self.tokenizer.apply_chat_template(
@@ -351,8 +409,54 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
     ) -> DataProto:
         pipeline_modes = batch.non_tensor_batch.get("pipeline_mode")
         if pipeline_modes is None:
-            pipeline_modes = np.array([PIPELINE_SHARED] * len(batch), dtype=object)
+            pipeline_modes = np.array([PIPELINE_SUMMARY] * len(batch), dtype=object)
         expanded_pipeline_modes = np.repeat(pipeline_modes, n)
+
+        batch_mode = str(expanded_pipeline_modes[0]) if len(expanded_pipeline_modes) > 0 else PIPELINE_SUMMARY
+        if batch_mode == PIPELINE_SUMMARY:
+            prompts = [conversation[:-1] for conversation in batch_conversations]
+            prompt_texts = [
+                self.tokenizer.apply_chat_template(prompt, add_generation_prompt=True, tokenize=False)
+                for prompt in prompts
+            ]
+            sequences = [
+                self.tokenizer.apply_chat_template(conversation, add_generation_prompt=False, tokenize=False)
+                for conversation in batch_conversations
+            ]
+            responses = [sequence[len(prompt_texts[i]) :] for i, sequence in enumerate(sequences)]
+
+            prompt_tensors = self.tokenizer(prompt_texts, return_tensors="pt", padding="longest", padding_side="left")
+            response_tensors = self.tokenizer(responses, return_tensors="pt", padding="longest", padding_side="right")
+
+            response_mask = response_tensors["attention_mask"].to(dtype=torch.float32)
+            reward_mask = _keep_last_token(response_mask)
+            input_ids = torch.cat([prompt_tensors["input_ids"], response_tensors["input_ids"]], dim=1)
+            attention_mask = torch.cat(
+                [prompt_tensors["attention_mask"], response_tensors["attention_mask"]],
+                dim=1,
+            )
+            position_ids = (attention_mask.cumsum(dim=1) - 1).clamp_min(0) * attention_mask
+
+            batch_td = TensorDict(
+                {
+                    "prompts": prompt_tensors["input_ids"],
+                    "responses": response_tensors["input_ids"],
+                    "response_mask": response_mask,
+                    "reward_mask": reward_mask,
+                    "input_ids": input_ids,
+                    "attention_mask": attention_mask,
+                    "position_ids": position_ids,
+                },
+                batch_size=len(input_ids),
+            )
+            rewards = np.array([reward for reward in batch_reward], dtype=object)
+            return DataProto(
+                batch=batch_td,
+                non_tensor_batch={
+                    "__reward__": rewards,
+                    "pipeline_mode": expanded_pipeline_modes,
+                },
+            )
 
         prompt_id_rows = []
         response_id_rows = []
