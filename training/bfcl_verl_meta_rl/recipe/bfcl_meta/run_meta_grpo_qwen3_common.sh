@@ -72,6 +72,6 @@ python3 -m verl.trainer.main_ppo \
   trainer.n_gpus_per_node="$NGPU" \
   trainer.nnodes=1 \
   trainer.default_local_dir="$REPO_ROOT/checkpoints/$PROJECT_NAME/$EXPERIMENT_NAME" \
-  trainer.save_freq=10 \
-  trainer.test_freq=20 \
+  trainer.save_freq=20 \
+  trainer.test_freq=300 \
   trainer.total_epochs="$TOTAL_EPOCHS" "$@"
