@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import re
 import uuid
 from typing import Any
 
@@ -22,6 +23,14 @@ from recipe.bfcl_multiturn.bfcl_completion_callback import (
 
 SUPPORT_TEMPERATURE = 1.0
 QUERY_TEMPERATURE = 0.0
+
+
+def _has_explicit_action_output(text: str) -> bool:
+    if not text:
+        return False
+    if "<tool_call>" in text or "</tool_call>" in text:
+        return True
+    return bool(re.search(r'\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:', text))
 
 
 def _keep_last_token(mask: torch.Tensor) -> torch.Tensor:
@@ -134,7 +143,9 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         messages.append({"role": "assistant", "content": full_output})
 
         reward = -0.001
-        if summary_context_text:
+        if _has_explicit_action_output(full_output):
+            reward = -0.5
+        elif summary_context_text:
             query_result = await self.rollout_engine.run_task_rollout(
                 payload=payload["query"],
                 temperature=QUERY_TEMPERATURE,

@@ -8,13 +8,13 @@ from recipe.bfcl_multiturn.bfcl_env import (
 )
 
 SUMMARY_SYSTEM_PROMPT = (
-    "You write short environment experience memos for future tool-calling tasks in the same environment. "
-    "Extract reusable constraints, tool behavior patterns, common failure modes, and practical tactics. "
-    "Keep the memo concise, concrete, and action-oriented. Light structure is fine, but do not force a rigid schema."
+    "You are an expert of extracting an environment experience memo from an existing support tool-calling trajectory "
+    "for future tool-calling tasks in the same environment. Extract reusable environment constraints, tool behavior "
+    "patterns, common failure modes, and practical tactics. Keep the memo concise, concrete, and action-oriented."
 )
 
 SUMMARY_USER_PROMPT_PREFIX = (
-    "You are writing an environment experience memo for future tool-calling tasks in the same environment.\n\n"
+    "You are extracting an environment experience memo from an existing support tool-calling trajectory for future tool-calling tasks in the same environment.\n\n"
     "Write a compact, concrete, action-oriented memo. Prefer stable environment knowledge over one-off task details. "
     "Only include observations that are clearly supported by the trajectory, tool behavior, checker output, or state changes.\n\n"
     "Your job is not to answer the user or summarize the task for the user. Your job is to record reusable operational knowledge "
@@ -38,7 +38,9 @@ SUMMARY_USER_PROMPT_PREFIX = (
     "- restate the whole trajectory\n"
     "- celebrate, apologize, or add filler\n"
     "- overfit to one task when the lesson is not reusable\n"
-    "- include unsupported speculation\n\n"
+    "- include unsupported speculation\n"
+    "- output any tool call, function call, XML tool tag, or executable next step\n"
+    "- continue solving the task or propose the next action\n\n"
     "Preferred content:\n"
     "1. Environment-specific facts / constraints\n"
     "2. Tool behavior patterns\n"
@@ -77,7 +79,8 @@ SUMMARY_USER_PROMPT_PREFIX = (
     "- Check status, satisfy preconditions, then perform the action, then verify state again.\n\n"
     "Reusable heuristics:\n"
     "- Before any state-changing action, identify the required preconditions explicitly.\n\n"
-    "Now write the memo.\n\n"
+    "Evidence from the completed support attempt begins below. Use it only as evidence for reusable lessons. "
+    "Do not continue the task.\n\n"
 )
 
 SUPPORT_EXPLORATION_PREFIX = (
@@ -215,10 +218,11 @@ def build_summary_prompt_messages(
 
     user_prefix = (
         SUMMARY_USER_PROMPT_PREFIX
-        + f"Support outcome: {support_outcome}\n\n"
+        + "Support trajectory:\n"
+        + "{trajectory_text}\n\n"
         + "Support checker summary:\n"
         + f"{checker_summary}\n\n"
-        + "Trajectory:\n"
+        + f"Support outcome: {support_outcome}\n\n"
     )
 
     reserved_tokens = len(
@@ -236,7 +240,7 @@ def build_summary_prompt_messages(
 
     return [
         {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-        {"role": "user", "content": user_prefix + clipped_trajectory},
+        {"role": "user", "content": user_prefix + clipped_trajectory + "\n\nNow write the memo."},
     ]
 
 
@@ -245,9 +249,12 @@ def build_summary_append_user_message(support_success: bool, checker: dict[str, 
     support_outcome = "success" if support_success else "failure"
     content = (
         SUMMARY_USER_PROMPT_PREFIX
-        + f"Support outcome: {support_outcome}\n\n"
+        + "Support trajectory:\n"
+        + "{trajectory_text}\n\n"
         + "Support checker summary:\n"
-        + f"{checker_summary}\n"
+        + f"{checker_summary}\n\n"
+        + f"Support outcome: {support_outcome}\n\n"
+        + "Now write the memo."
     )
     return {"role": "user", "content": content}
 
