@@ -18,6 +18,10 @@ def _env_key(entry: dict) -> str:
     return "|".join(sorted(entry["involved_classes"]))
 
 
+def _experience_key(entry: dict, category: str) -> str:
+    return f"{_env_key(entry)}::{category}"
+
+
 def _tools_to_string(tools: list[dict]) -> str:
     return "\n".join(json.dumps(t, ensure_ascii=False) for t in tools)
 
@@ -50,6 +54,7 @@ def _build_rows(categories: list[str]) -> list[dict]:
                     "id": entry["id"],
                     "category": category,
                     "env_key": _env_key(entry),
+                    "experience_key": _experience_key(entry, category),
                     "tools_kwargs": _tools_to_string(entry["function"]),
                     "flag": entry["id"],
                     "reward_model": json.dumps(gt, ensure_ascii=False),
@@ -78,14 +83,20 @@ def _split_by_env(rows: list[dict], unseen_env_ratio: float, seen_test_ratio: fl
 
     train, test_seen, test_unseen = [], [], []
     for env in seen_envs:
-        env_rows = env_to_rows[env][:]
-        rng.shuffle(env_rows)
-        n_seen = max(1, int(len(env_rows) * seen_test_ratio))
-        if len(env_rows) == 1:
-            train.extend(env_rows)
-            continue
-        test_seen.extend(env_rows[:n_seen])
-        train.extend(env_rows[n_seen:])
+        experience_to_rows = defaultdict(list)
+        for row in env_to_rows[env]:
+            experience_to_rows[row["experience_key"]].append(row)
+
+        for experience_key, experience_rows in experience_to_rows.items():
+            experience_rows = experience_rows[:]
+            rng.shuffle(experience_rows)
+            if len(experience_rows) == 1:
+                train.extend(experience_rows)
+                continue
+            n_seen = max(1, int(len(experience_rows) * seen_test_ratio))
+            n_seen = min(n_seen, len(experience_rows) - 1)
+            test_seen.extend(experience_rows[:n_seen])
+            train.extend(experience_rows[n_seen:])
 
     for env in unseen_envs:
         test_unseen.extend(env_to_rows[env])
@@ -142,6 +153,10 @@ def main():
         "train_size_cap": args.train_size,
         "num_seen_envs": len(seen_envs),
         "num_unseen_envs": len(unseen_envs),
+        "num_total_experience_keys": len({row["experience_key"] for row in rows}),
+        "num_train_experience_keys": len({row["experience_key"] for row in train}),
+        "num_test_seen_experience_keys": len({row["experience_key"] for row in test_seen}),
+        "num_test_unseen_experience_keys": len({row["experience_key"] for row in test_unseen}),
         "seen_envs": sorted(list(seen_envs)),
         "unseen_envs": sorted(list(unseen_envs)),
     }

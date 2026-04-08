@@ -17,12 +17,23 @@ def _decode_payload(row: dict) -> dict:
     return payload
 
 
+def _experience_key(row: dict) -> str:
+    if row.get("experience_key"):
+        return row["experience_key"]
+    payload = _decode_payload(row)
+    category = row.get("category") or payload.get("category", "")
+    return f"{row['env_key']}::{category}"
+
+
 def _build_pair_row(split_name: str, support_row: dict, query_row: dict) -> dict:
     support_payload = _decode_payload(support_row)
     query_payload = _decode_payload(query_row)
+    experience_key = _experience_key(query_row)
     pair_payload = {
         "pair_split": split_name,
         "env_key": query_row["env_key"],
+        "category": query_row.get("category") or query_payload.get("category"),
+        "experience_key": experience_key,
         "support": support_payload,
         "query": query_payload,
     }
@@ -31,6 +42,8 @@ def _build_pair_row(split_name: str, support_row: dict, query_row: dict) -> dict
         "data_source": "bfcl_meta_summary",
         "pair_id": pair_id,
         "env_key": query_row["env_key"],
+        "category": query_row.get("category") or query_payload.get("category"),
+        "experience_key": experience_key,
         "support_id": support_row["id"],
         "query_id": query_row["id"],
         "flag": pair_id,
@@ -41,17 +54,17 @@ def _build_pair_row(split_name: str, support_row: dict, query_row: dict) -> dict
     }
 
 
-def _group_by_env(rows: list[dict]) -> dict[str, list[dict]]:
+def _group_by_experience(rows: list[dict]) -> dict[str, list[dict]]:
     grouped = defaultdict(list)
     for row in rows:
-        grouped[row["env_key"]].append(row)
+        grouped[_experience_key(row)].append(row)
     return grouped
 
 
 def _build_train_pairs(train_rows: list[dict]) -> list[dict]:
-    grouped = _group_by_env(train_rows)
+    grouped = _group_by_experience(train_rows)
     pairs = []
-    for env_key, rows in grouped.items():
+    for experience_key, rows in grouped.items():
         for support_row in rows:
             for query_row in rows:
                 if support_row["id"] == query_row["id"]:
@@ -61,11 +74,11 @@ def _build_train_pairs(train_rows: list[dict]) -> list[dict]:
 
 
 def _build_seen_eval_pairs(train_rows: list[dict], test_seen_rows: list[dict]) -> list[dict]:
-    train_grouped = _group_by_env(train_rows)
-    query_grouped = _group_by_env(test_seen_rows)
+    train_grouped = _group_by_experience(train_rows)
+    query_grouped = _group_by_experience(test_seen_rows)
     pairs = []
-    for env_key, query_rows in query_grouped.items():
-        support_rows = train_grouped.get(env_key, [])
+    for experience_key, query_rows in query_grouped.items():
+        support_rows = train_grouped.get(experience_key, [])
         for query_row in query_rows:
             for support_row in support_rows:
                 if support_row["id"] == query_row["id"]:
@@ -75,9 +88,9 @@ def _build_seen_eval_pairs(train_rows: list[dict], test_seen_rows: list[dict]) -
 
 
 def _build_unseen_eval_pairs(test_unseen_rows: list[dict]) -> list[dict]:
-    grouped = _group_by_env(test_unseen_rows)
+    grouped = _group_by_experience(test_unseen_rows)
     pairs = []
-    for env_key, rows in grouped.items():
+    for experience_key, rows in grouped.items():
         for support_row in rows:
             for query_row in rows:
                 if support_row["id"] == query_row["id"]:
@@ -113,6 +126,9 @@ def main():
         "num_source_train_tasks": len(train_rows),
         "num_source_test_seen_tasks": len(test_seen_rows),
         "num_source_test_unseen_tasks": len(test_unseen_rows),
+        "num_source_train_experience_keys": len({_experience_key(row) for row in train_rows}),
+        "num_source_test_seen_experience_keys": len({_experience_key(row) for row in test_seen_rows}),
+        "num_source_test_unseen_experience_keys": len({_experience_key(row) for row in test_unseen_rows}),
         "num_train_pairs": len(train_pairs),
         "num_test_seen_pairs": len(test_seen_pairs),
         "num_test_unseen_pairs": len(test_unseen_pairs),

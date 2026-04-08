@@ -1,9 +1,0 @@
-{
-  "source_dir": "/workspace/training/bfcl_verl_meta_rl/data/bfcl_multiturn_rl",
-  "num_source_train_tasks": 515,
-  "num_source_test_seen_tasks": 109,
-  "num_source_test_unseen_tasks": 176,
-  "num_train_pairs": 18132,
-  "num_test_seen_pairs": 4005,
-  "num_test_unseen_pairs": 12400
-}
