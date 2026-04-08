@@ -65,7 +65,7 @@ def _build_rows(categories: list[str]) -> list[dict]:
     return rows
 
 
-def _split_by_env(rows: list[dict], unseen_env_ratio: float, seen_test_ratio: float, seed: int):
+def _split_by_env(rows: list[dict], unseen_env_ratio: float, seen_test_count_per_experience: int, seed: int):
     env_to_rows = defaultdict(list)
     for row in rows:
         env_to_rows[row["env_key"]].append(row)
@@ -90,11 +90,10 @@ def _split_by_env(rows: list[dict], unseen_env_ratio: float, seen_test_ratio: fl
         for experience_key, experience_rows in experience_to_rows.items():
             experience_rows = experience_rows[:]
             rng.shuffle(experience_rows)
-            if len(experience_rows) == 1:
+            if len(experience_rows) <= 2:
                 train.extend(experience_rows)
                 continue
-            n_seen = max(1, int(len(experience_rows) * seen_test_ratio))
-            n_seen = min(n_seen, len(experience_rows) - 1)
+            n_seen = min(max(0, seen_test_count_per_experience), len(experience_rows) - 1)
             test_seen.extend(experience_rows[:n_seen])
             train.extend(experience_rows[n_seen:])
 
@@ -119,7 +118,7 @@ def main():
     parser.add_argument("--categories", default=",".join(MULTI_TURN_CATEGORIES))
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--unseen_env_ratio", type=float, default=0.15)
-    parser.add_argument("--seen_test_ratio", type=float, default=0.19)
+    parser.add_argument("--seen_test_count_per_experience", type=int, default=2)
     parser.add_argument(
         "--train_size",
         type=int,
@@ -133,7 +132,7 @@ def main():
     train, test_seen, test_unseen, seen_envs, unseen_envs = _split_by_env(
         rows=rows,
         unseen_env_ratio=args.unseen_env_ratio,
-        seen_test_ratio=args.seen_test_ratio,
+        seen_test_count_per_experience=args.seen_test_count_per_experience,
         seed=args.seed,
     )
     train = _cap_train_rows(train, train_size=args.train_size, seed=args.seed)
@@ -151,6 +150,7 @@ def main():
         "num_test_seen": len(test_seen),
         "num_test_unseen": len(test_unseen),
         "train_size_cap": args.train_size,
+        "seen_test_count_per_experience": args.seen_test_count_per_experience,
         "num_seen_envs": len(seen_envs),
         "num_unseen_envs": len(unseen_envs),
         "num_total_experience_keys": len({row["experience_key"] for row in rows}),
