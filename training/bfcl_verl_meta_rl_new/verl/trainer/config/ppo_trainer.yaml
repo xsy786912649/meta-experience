@@ -1069,6 +1069,9 @@ trainer:
   # Whether to run validation only
   val_only: False
 
+  # Whether to run rollout/reward/advantage only and skip actor/critic updates
+  rollout_only: False
+
   # Validation frequency (in training iterations)
   test_freq: -1
 
