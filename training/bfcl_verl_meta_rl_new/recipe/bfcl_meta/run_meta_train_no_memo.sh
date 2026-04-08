@@ -14,6 +14,7 @@ VAL_SPLIT=${VAL_SPLIT:-seen}  # seen | unseen
 NGPU=${NGPU:-8}
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-1}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-bfcl-meta-train-no-memo}
+PROJECT_NAME=${PROJECT_NAME:-bfcl_meta_rl}
 LOG_DIR=${LOG_DIR:-$REPO_ROOT/logs}
 TIMESTAMP=$(date "+%Y%m%d_%H%M%S")
 mkdir -p "$LOG_DIR"
@@ -60,10 +61,12 @@ python3 -m verl.trainer.main_ppo \
   actor_rollout_ref.rollout.multi_turn.disable_query_memo=true \
   trainer.rollout_only=true \
   trainer.val_before_train=false \
-  trainer.logger=['console'] \
+  trainer.logger=['console','wandb'] \
+  trainer.project_name="$PROJECT_NAME" \
+  trainer.experiment_name="$EXPERIMENT_NAME" \
   trainer.n_gpus_per_node="$NGPU" \
   trainer.nnodes=1 \
-  trainer.default_local_dir="$REPO_ROOT/checkpoints/bfcl_meta_rl/${EXPERIMENT_NAME}" \
+  trainer.default_local_dir="$REPO_ROOT/checkpoints/$PROJECT_NAME/${EXPERIMENT_NAME}" \
   trainer.save_freq=1000000 \
   trainer.test_freq=0 \
   trainer.total_epochs="$TOTAL_EPOCHS" "$@"
