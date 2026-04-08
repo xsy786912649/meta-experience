@@ -1214,6 +1214,7 @@ class RayPPOTrainer:
                 timing_raw = {}
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
                 batch.meta_info["train_epoch"] = epoch
+                rollout_only = bool(self.config.trainer.get("rollout_only", False))
 
                 # batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
                 # non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]
@@ -1414,20 +1415,22 @@ class RayPPOTrainer:
                         )
 
                     # update critic
-                    if self.use_critic:
+                    if self.use_critic and not rollout_only:
                         with marked_timer("update_critic", timing_raw, color="pink"):
                             critic_output = self.critic_wg.update_critic(batch)
                         critic_output_metrics = reduce_metrics(critic_output.meta_info["metrics"])
                         metrics.update(critic_output_metrics)
 
                     # implement critic warmup
-                    if self.config.trainer.critic_warmup <= self.global_steps:
+                    if (not rollout_only) and self.config.trainer.critic_warmup <= self.global_steps:
                         # update actor
                         with marked_timer("update_actor", timing_raw, color="red"):
                             batch.meta_info["multi_turn"] = self.config.actor_rollout_ref.rollout.multi_turn.enable
                             actor_output = self.actor_rollout_wg.update_actor(batch)
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)
+                    elif rollout_only:
+                        metrics["trainer/rollout_only"] = 1.0
 
                     # Log rollout generations if enabled
                     rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)

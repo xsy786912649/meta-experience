@@ -75,6 +75,9 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         self.support_phase_epochs = int(
             config.actor_rollout_ref.rollout.multi_turn.get("support_phase_epochs", 1)
         )
+        self.disable_query_memo = bool(
+            config.actor_rollout_ref.rollout.multi_turn.get("disable_query_memo", False)
+        )
         self._prepared_samples: dict[str, dict[str, Any]] = {}
         self._prepared_requests: dict[str, list[dict[str, Any]]] = {}
         self._prepared_request_lock = asyncio.Lock()
@@ -254,11 +257,11 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         reward = -0.001
         if _has_explicit_action_output(full_output):
             reward = -0.5
-        elif summary_context_text:
+        elif summary_context_text or self.disable_query_memo:
             query_result = await self.rollout_engine.run_task_rollout(
                 payload=payload["query"],
                 temperature=QUERY_TEMPERATURE,
-                experience_summary=summary_context_text,
+                experience_summary=None if self.disable_query_memo else summary_context_text,
             )
             reward = 1.0 if query_result["success"] else -0.001
 
