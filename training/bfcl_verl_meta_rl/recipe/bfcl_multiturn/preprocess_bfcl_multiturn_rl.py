@@ -65,7 +65,7 @@ def _build_rows(categories: list[str]) -> list[dict]:
     return rows
 
 
-def _split_by_env(rows: list[dict], unseen_env_ratio: float, seen_test_count_per_experience: int, seed: int):
+def _split_by_env(rows: list[dict], unseen_env_ratio: float, seed: int):
     env_to_rows = defaultdict(list)
     for row in rows:
         env_to_rows[row["env_key"]].append(row)
@@ -81,26 +81,14 @@ def _split_by_env(rows: list[dict], unseen_env_ratio: float, seen_test_count_per
         seen_envs = set(unseen_envs)
         unseen_envs = set()
 
-    train, test_seen, test_unseen = [], [], []
+    train, test_unseen = [], []
     for env in seen_envs:
-        experience_to_rows = defaultdict(list)
-        for row in env_to_rows[env]:
-            experience_to_rows[row["experience_key"]].append(row)
-
-        for experience_key, experience_rows in experience_to_rows.items():
-            experience_rows = experience_rows[:]
-            rng.shuffle(experience_rows)
-            if len(experience_rows) <= 2:
-                train.extend(experience_rows)
-                continue
-            n_seen = min(max(0, seen_test_count_per_experience), len(experience_rows) - 1)
-            test_seen.extend(experience_rows[:n_seen])
-            train.extend(experience_rows[n_seen:])
+        train.extend(env_to_rows[env])
 
     for env in unseen_envs:
         test_unseen.extend(env_to_rows[env])
 
-    return train, test_seen, test_unseen, seen_envs, unseen_envs
+    return train, test_unseen, seen_envs, unseen_envs
 
 
 def _cap_train_rows(train_rows: list[dict], train_size: int, seed: int) -> list[dict]:
@@ -118,7 +106,6 @@ def main():
     parser.add_argument("--categories", default=",".join(MULTI_TURN_CATEGORIES))
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--unseen_env_ratio", type=float, default=0.15)
-    parser.add_argument("--seen_test_count_per_experience", type=int, default=2)
     parser.add_argument(
         "--train_size",
         type=int,
@@ -129,10 +116,9 @@ def main():
 
     categories = [x.strip() for x in args.categories.split(",") if x.strip()]
     rows = _build_rows(categories)
-    train, test_seen, test_unseen, seen_envs, unseen_envs = _split_by_env(
+    train, test_unseen, seen_envs, unseen_envs = _split_by_env(
         rows=rows,
         unseen_env_ratio=args.unseen_env_ratio,
-        seen_test_count_per_experience=args.seen_test_count_per_experience,
         seed=args.seed,
     )
     train = _cap_train_rows(train, train_size=args.train_size, seed=args.seed)
@@ -140,22 +126,20 @@ def main():
     local_dir = os.path.abspath(os.path.expanduser(args.local_dir))
     os.makedirs(local_dir, exist_ok=True)
     datasets.Dataset.from_list(train).to_parquet(os.path.join(local_dir, "train.parquet"))
-    datasets.Dataset.from_list(test_seen).to_parquet(os.path.join(local_dir, "test_seen.parquet"))
     datasets.Dataset.from_list(test_unseen).to_parquet(os.path.join(local_dir, "test_unseen.parquet"))
 
     summary = {
         "categories": categories,
         "num_total": len(rows),
         "num_train": len(train),
-        "num_test_seen": len(test_seen),
+        "num_test_seen": 0,
         "num_test_unseen": len(test_unseen),
         "train_size_cap": args.train_size,
-        "seen_test_count_per_experience": args.seen_test_count_per_experience,
         "num_seen_envs": len(seen_envs),
         "num_unseen_envs": len(unseen_envs),
         "num_total_experience_keys": len({row["experience_key"] for row in rows}),
         "num_train_experience_keys": len({row["experience_key"] for row in train}),
-        "num_test_seen_experience_keys": len({row["experience_key"] for row in test_seen}),
+        "num_test_seen_experience_keys": 0,
         "num_test_unseen_experience_keys": len({row["experience_key"] for row in test_unseen}),
         "seen_envs": sorted(list(seen_envs)),
         "unseen_envs": sorted(list(unseen_envs)),
