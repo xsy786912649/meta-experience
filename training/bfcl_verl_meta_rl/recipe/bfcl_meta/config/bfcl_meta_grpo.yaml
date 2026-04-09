@@ -30,7 +30,7 @@ actor_rollout_ref:
       enable: true
       max_assistant_turns: 50
       support_max_model_len: 16384
-      summary_safety_margin: 512
+      summary_safety_margin: 1024
       tool_config_path: null
       completion_callback: recipe.bfcl_meta.meta_callback.BFCLMetaCompletionCallback
       format: hermes

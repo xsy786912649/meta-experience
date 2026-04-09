@@ -9,7 +9,7 @@ from recipe.bfcl_multiturn.bfcl_env import (
 
 SUMMARY_SYSTEM_PROMPT = (
     "You are extracting an experience memo from your own support tool-calling trajectory. Extract the environment "
-    "constraints, reflect on your mistakes (if any), and propose high-level guidance to avoid repeating them in future "
+    "constraints, reflect on your mistakes (if any), and propose high-level guidance to avoid the mistakes in future "
     "similar tool-calling tasks in the same environment. Keep the memo concise."
 )
 
@@ -18,7 +18,7 @@ SUMMARY_USER_PROMPT_PREFIX = (
     "Focus on:\n"
     "- environment-specific constraints\n"
     "- hidden preconditions\n"
-    "- failure reason and how to avoid mistakes\n\n"
+    "- first think about the failure reason and show how to avoid mistakes\n\n"
     "Do not:\n"
     "- answer the user\n"
     "- restate the whole trajectory\n"

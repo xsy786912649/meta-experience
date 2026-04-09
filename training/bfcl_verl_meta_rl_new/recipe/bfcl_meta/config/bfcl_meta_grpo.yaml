@@ -30,7 +30,7 @@ actor_rollout_ref:
       enable: true
       max_assistant_turns: 50
       support_max_model_len: 16384
-      summary_safety_margin: 512
+      summary_safety_margin: 1024
       disable_query_memo: false
       pipeline_mode: phased
       val_pipeline_mode: summary_only
