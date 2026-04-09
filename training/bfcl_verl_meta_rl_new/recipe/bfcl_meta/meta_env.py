@@ -1,4 +1,5 @@
 import json
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -151,6 +152,10 @@ def truncate_prefix_by_tokens(tokenizer, text: str, max_tokens: int) -> str:
     return tokenizer.decode(prefix_ids, skip_special_tokens=False) + marker
 
 
+def remove_state_info_blocks(text: str) -> str:
+    return re.sub(r"<\|im_start\|>state_info\n.*?\n<\|im_end\|>\n?", "", text, flags=re.DOTALL)
+
+
 def build_summary_prompt_messages(
     tokenizer,
     trajectory_text: str,
@@ -186,15 +191,30 @@ def build_summary_prompt_messages(
 
     base_prompt_tokens = _full_prompt_tokens(_build_messages(""))
     trajectory_budget = max(0, max_prompt_tokens - base_prompt_tokens)
-    clipped_trajectory = truncate_prefix_by_tokens(tokenizer, trajectory_text, trajectory_budget)
-    prompt_messages = _build_messages(clipped_trajectory)
+    prompt_messages = _build_messages(trajectory_text)
+    total_tokens = _full_prompt_tokens(prompt_messages)
+    if total_tokens <= max_prompt_tokens:
+        return prompt_messages
+
+    state_free_trajectory = remove_state_info_blocks(trajectory_text)
+    prompt_messages = _build_messages(state_free_trajectory)
+    total_tokens = _full_prompt_tokens(prompt_messages)
+    if total_tokens <= max_prompt_tokens:
+        return prompt_messages
+
+    clipped_state_free_trajectory = truncate_prefix_by_tokens(
+        tokenizer,
+        state_free_trajectory,
+        trajectory_budget,
+    )
+    prompt_messages = _build_messages(clipped_state_free_trajectory)
     total_tokens = _full_prompt_tokens(prompt_messages)
     if total_tokens <= max_prompt_tokens:
         return prompt_messages
 
     overflow = total_tokens - max_prompt_tokens
     adjusted_budget = max(0, trajectory_budget - overflow - 64)
-    adjusted_trajectory = truncate_prefix_by_tokens(tokenizer, trajectory_text, adjusted_budget)
+    adjusted_trajectory = truncate_prefix_by_tokens(tokenizer, state_free_trajectory, adjusted_budget)
     return _build_messages(adjusted_trajectory)
 
 
