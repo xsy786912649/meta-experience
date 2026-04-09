@@ -144,11 +144,11 @@ def truncate_prefix_by_tokens(tokenizer, text: str, max_tokens: int) -> str:
     marker_budget = len(marker_ids)
     if max_tokens <= marker_budget + 8:
         clipped_ids = token_ids[:max_tokens]
-        return tokenizer.decode(clipped_ids, skip_special_tokens=True)
+        return tokenizer.decode(clipped_ids, skip_special_tokens=False)
 
     prefix_budget = max_tokens - marker_budget
     prefix_ids = token_ids[:prefix_budget]
-    return tokenizer.decode(prefix_ids, skip_special_tokens=True) + marker
+    return tokenizer.decode(prefix_ids, skip_special_tokens=False) + marker
 
 
 def build_summary_prompt_messages(
@@ -169,22 +169,33 @@ def build_summary_prompt_messages(
         + "Now write the memo."
     )
 
-    reserved_tokens = len(
-        tokenizer.apply_chat_template(
-            [
-                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prefix},
-            ],
-            tokenize=True,
-            add_generation_prompt=True,
+    def _build_messages(trajectory: str) -> list[dict[str, str]]:
+        return [
+            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prefix + trajectory + user_suffix},
+        ]
+
+    def _full_prompt_tokens(messages: list[dict[str, str]]) -> int:
+        return len(
+            tokenizer.apply_chat_template(
+                messages,
+                tokenize=True,
+                add_generation_prompt=True,
+            )
         )
-    )
-    trajectory_budget = max(256, max_prompt_tokens - reserved_tokens - 256)
+
+    base_prompt_tokens = _full_prompt_tokens(_build_messages(""))
+    trajectory_budget = max(0, max_prompt_tokens - base_prompt_tokens)
     clipped_trajectory = truncate_prefix_by_tokens(tokenizer, trajectory_text, trajectory_budget)
-    return [
-        {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-        {"role": "user", "content": user_prefix + clipped_trajectory + user_suffix},
-    ]
+    prompt_messages = _build_messages(clipped_trajectory)
+    total_tokens = _full_prompt_tokens(prompt_messages)
+    if total_tokens <= max_prompt_tokens:
+        return prompt_messages
+
+    overflow = total_tokens - max_prompt_tokens
+    adjusted_budget = max(0, trajectory_budget - overflow - 64)
+    adjusted_trajectory = truncate_prefix_by_tokens(tokenizer, trajectory_text, adjusted_budget)
+    return _build_messages(adjusted_trajectory)
 
 
 def _format_messages(messages: list[dict]) -> str:
