@@ -34,7 +34,7 @@ actor_rollout_ref:
       disable_query_memo: false
       pipeline_mode: phased
       val_pipeline_mode: summary_only
-      summary_phase_epochs: 2
+      summary_phase_epochs: 3
       support_phase_epochs: 1
       tool_config_path: null
       completion_callback: recipe.bfcl_meta.meta_callback.BFCLMetaCompletionCallback
