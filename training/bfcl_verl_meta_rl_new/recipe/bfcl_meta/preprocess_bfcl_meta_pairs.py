@@ -106,7 +106,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source_dir", default="data/bfcl_multiturn_rl")
     parser.add_argument("--output_dir", default="data/bfcl_meta_rl")
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--test_seen_pair_count", type=int, default=256)
     args = parser.parse_args()
 
