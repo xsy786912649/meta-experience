@@ -8,18 +8,17 @@ from recipe.bfcl_multiturn.bfcl_env import (
     build_system_prompt_with_tools,
 )
 
-SUMMARY_SYSTEM_PROMPT = (
-    "You are extracting an experience memo from your own support tool-calling trajectory. Extract the environment "
-    "constraints, reflect on your mistakes (if any), and propose high-level guidance to avoid the mistakes in future "
-    "similar tool-calling tasks in the same environment. Keep the memo concise."
-)
+SUMMARY_SYSTEM_PROMPT = "You are extracting an experience memo from your own support tool-calling trajectory."
 
 SUMMARY_USER_PROMPT_PREFIX = (
-    "You are extracting an experience memo from your own support tool-calling trajectory. Reflect on your mistakes (if any) and propose high-level guidance to avoid repeating them in future similar tool-calling tasks in the same environment.\n\n"
-    "Focus on:\n"
+    "First think, go through and analyse all the trajectory, reflect on your mistakes (if any), inside <think> and "
+    "</think>.\n"
+    "Then, propose high-level guidance to avoid mistakes in future other tool-calling tasks. Keep your final memo "
+    "concise and in one sentence. (Do not reflect the mistake after </think>)\n\n"
+    "The high-level guidance potentially include\n"
     "- environment-specific constraints\n"
     "- hidden preconditions\n"
-    "- first think about the failure reason and show how to avoid mistakes\n\n"
+    "- more high-level strategy for different tasks with different involved tools\n\n"
     "Do not:\n"
     "- answer the user\n"
     "- restate the whole trajectory\n"
