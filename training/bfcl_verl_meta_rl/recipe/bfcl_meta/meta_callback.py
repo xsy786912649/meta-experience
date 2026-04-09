@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import logging
 import re
 import uuid
 from typing import Any
@@ -23,6 +24,7 @@ from recipe.bfcl_multiturn.bfcl_completion_callback import (
 
 SUPPORT_TEMPERATURE = 1.0
 QUERY_TEMPERATURE = 0.0
+logger = logging.getLogger(__name__)
 
 
 def _has_explicit_action_output(text: str) -> bool:
@@ -74,6 +76,38 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             max_assistant_turns=self.max_assistant_turns,
         )
 
+    def _log_summary_prompt_lengths(
+        self,
+        support_result: dict[str, Any],
+        summary_messages: list[dict[str, str]],
+        meta_instance_id: str,
+    ) -> None:
+        support_conversation_tokens = len(
+            self.tokenizer.apply_chat_template(
+                support_result["conversation"],
+                tokenize=True,
+                add_generation_prompt=True,
+            )
+        )
+        trajectory_text = support_result["trajectory_text"]
+        trajectory_tokens = len(self.tokenizer(trajectory_text, add_special_tokens=False)["input_ids"])
+        summary_prompt_tokens = len(
+            self.tokenizer.apply_chat_template(
+                summary_messages,
+                tokenize=True,
+                add_generation_prompt=True,
+            )
+        )
+        logger.warning(
+            "summary_prompt_lengths meta_instance_id=%s support_conversation_tokens=%s trajectory_tokens=%s summary_prompt_tokens=%s summary_budget=%s state_info_blocks=%s",
+            meta_instance_id,
+            support_conversation_tokens,
+            trajectory_tokens,
+            summary_prompt_tokens,
+            self.summary_prompt_budget,
+            trajectory_text.count("<|im_start|>state_info"),
+        )
+
     async def prepare_batch_conversations(self, batch: DataProto, n: int) -> list[list[dict[str, str]]]:
         prepared = []
         payloads = [
@@ -102,6 +136,11 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             support_success=support_result["success"],
             checker=support_result["checker"],
             max_prompt_tokens=self.summary_prompt_budget,
+        )
+        self._log_summary_prompt_lengths(
+            support_result=support_result,
+            summary_messages=summary_messages,
+            meta_instance_id=payload["meta_instance_id"],
         )
         return {
             "meta_instance_id": payload["meta_instance_id"],

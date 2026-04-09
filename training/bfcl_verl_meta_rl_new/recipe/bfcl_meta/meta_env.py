@@ -169,21 +169,6 @@ def build_summary_prompt_messages(
         + "Now write the memo."
     )
 
-    def _build_messages(trajectory: str) -> list[dict[str, str]]:
-        return [
-            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prefix + trajectory + user_suffix},
-        ]
-
-    def _full_prompt_tokens(prompt_messages: list[dict[str, str]]) -> int:
-        return len(
-            tokenizer.apply_chat_template(
-                prompt_messages,
-                tokenize=True,
-                add_generation_prompt=True,
-            )
-        )
-
     reserved_tokens = len(
         tokenizer.apply_chat_template(
             [
@@ -196,25 +181,10 @@ def build_summary_prompt_messages(
     )
     trajectory_budget = max(256, max_prompt_tokens - reserved_tokens - 256)
     clipped_trajectory = truncate_prefix_by_tokens(tokenizer, trajectory_text, trajectory_budget)
-    current_budget = trajectory_budget
-
-    while True:
-        prompt_messages = _build_messages(clipped_trajectory)
-        total_tokens = _full_prompt_tokens(prompt_messages)
-        if total_tokens <= max_prompt_tokens:
-            return prompt_messages
-
-        overflow = total_tokens - max_prompt_tokens
-        next_budget = max(0, current_budget - max(overflow + 32, 64))
-        if next_budget >= current_budget:
-            next_budget = max(0, current_budget - 64)
-
-        next_trajectory = truncate_prefix_by_tokens(tokenizer, trajectory_text, next_budget)
-        if next_budget == current_budget or next_trajectory == clipped_trajectory:
-            return _build_messages(next_trajectory if next_budget < current_budget else "")
-
-        current_budget = next_budget
-        clipped_trajectory = next_trajectory
+    return [
+        {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prefix + clipped_trajectory + user_suffix},
+    ]
 
 
 def _format_messages(messages: list[dict]) -> str:

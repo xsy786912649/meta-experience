@@ -2,6 +2,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import logging
 import re
 import uuid
 from typing import Any
@@ -19,6 +20,7 @@ from recipe.bfcl_meta.meta_rollout import MetaRolloutEngine, parse_summary_gener
 
 SUPPORT_TEMPERATURE = 1.0
 QUERY_TEMPERATURE = 0.0
+logger = logging.getLogger(__name__)
 
 PIPELINE_SUMMARY = "summary_only"
 PIPELINE_SUPPORT = "support_only"
@@ -89,6 +91,40 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             chat_fn=self._chat_once,
             max_model_len=self.max_model_len,
             max_assistant_turns=self.max_assistant_turns,
+        )
+
+    def _log_summary_prompt_lengths(
+        self,
+        support_result: dict[str, Any],
+        summary_messages: list[dict[str, str]],
+        meta_instance_id: str,
+        phase: str,
+    ) -> None:
+        support_conversation_tokens = len(
+            self.tokenizer.apply_chat_template(
+                support_result["conversation"],
+                tokenize=True,
+                add_generation_prompt=True,
+            )
+        )
+        trajectory_text = support_result["trajectory_text"]
+        trajectory_tokens = len(self.tokenizer(trajectory_text, add_special_tokens=False)["input_ids"])
+        summary_prompt_tokens = len(
+            self.tokenizer.apply_chat_template(
+                summary_messages,
+                tokenize=True,
+                add_generation_prompt=True,
+            )
+        )
+        logger.warning(
+            "summary_prompt_lengths meta_instance_id=%s phase=%s support_conversation_tokens=%s trajectory_tokens=%s summary_prompt_tokens=%s summary_budget=%s state_info_blocks=%s",
+            meta_instance_id,
+            phase,
+            support_conversation_tokens,
+            trajectory_tokens,
+            summary_prompt_tokens,
+            self.summary_prompt_budget,
+            trajectory_text.count("<|im_start|>state_info"),
         )
 
     def _select_batch_mode(self, validate: bool) -> str:
@@ -163,6 +199,12 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             checker=support_result["checker"],
             max_prompt_tokens=self.summary_prompt_budget,
         )
+        self._log_summary_prompt_lengths(
+            support_result=support_result,
+            summary_messages=summary_messages,
+            meta_instance_id=payload["meta_instance_id"],
+            phase=PIPELINE_SUMMARY,
+        )
         conversations = []
         for _ in range(repeat_count):
             prepared_conversation = copy.deepcopy(summary_messages)
@@ -203,6 +245,13 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             )
             for result in support_results
         ]
+        for summary_messages, support_result in zip(conversations, support_results):
+            self._log_summary_prompt_lengths(
+                support_result=support_result,
+                summary_messages=summary_messages,
+                meta_instance_id=payload["meta_instance_id"],
+                phase=PIPELINE_SUPPORT,
+            )
         for prepared_conversation, support_result in zip(conversations, support_results):
             await self._register_prepared_request(
                 prepared_conversation,
