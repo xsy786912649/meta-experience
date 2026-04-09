@@ -23,14 +23,14 @@ actor_rollout_ref:
     mode: async
     prompt_length: 18432
     response_length: 2048
-    max_model_len: 21504
+    max_model_len: 22528
     n: 8
     gpu_memory_utilization: 0.7
     multi_turn:
       enable: true
       max_assistant_turns: 50
       support_max_model_len: 16384
-      summary_safety_margin: 1024
+      summary_safety_margin: 512
       disable_query_memo: false
       pipeline_mode: phased
       val_pipeline_mode: summary_only

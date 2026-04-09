@@ -161,13 +161,12 @@ def build_summary_prompt_messages(
     checker_summary = summarize_checker_result(checker)
     support_outcome = "success" if support_success else "failure"
 
-    user_prefix = (
-        SUMMARY_USER_PROMPT_PREFIX
-        + "Support trajectory:\n"
-        + "{trajectory_text}\n\n"
-        + "Support checker summary:\n"
+    user_prefix = SUMMARY_USER_PROMPT_PREFIX + "Support trajectory:\n"
+    user_suffix = (
+        "\n\nSupport checker summary:\n"
         + f"{checker_summary}\n\n"
         + f"Support outcome: {support_outcome}\n\n"
+        + "Now write the memo."
     )
 
     reserved_tokens = len(
@@ -185,23 +184,8 @@ def build_summary_prompt_messages(
 
     return [
         {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-        {"role": "user", "content": user_prefix + clipped_trajectory + "\n\nNow write the memo."},
+        {"role": "user", "content": user_prefix + clipped_trajectory + user_suffix},
     ]
-
-
-def build_summary_append_user_message(support_success: bool, checker: dict[str, Any]) -> dict[str, str]:
-    checker_summary = summarize_checker_result(checker)
-    support_outcome = "success" if support_success else "failure"
-    content = (
-        SUMMARY_USER_PROMPT_PREFIX
-        + "Support trajectory:\n"
-        + "{trajectory_text}\n\n"
-        + "Support checker summary:\n"
-        + f"{checker_summary}\n\n"
-        + f"Support outcome: {support_outcome}\n\n"
-        + "Now write the memo."
-    )
-    return {"role": "user", "content": content}
 
 
 def _format_messages(messages: list[dict]) -> str:
@@ -243,7 +227,8 @@ def _format_state_items(state_items: list[dict]) -> str:
 def build_trajectory_text(system_prompt: str, inference_log: list[Any]) -> str:
     parts = []
     if system_prompt:
-        parts.append(f"<|im_start|>system\n{system_prompt}<|im_end|>\n")
+        clean_system_prompt = system_prompt.removeprefix(SUPPORT_EXPLORATION_PREFIX)
+        parts.append(f"<|im_start|>system\n{clean_system_prompt}<|im_end|>\n")
 
     for item in inference_log:
         if isinstance(item, list):
