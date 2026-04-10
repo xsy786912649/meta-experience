@@ -35,7 +35,7 @@ actor_rollout_ref:
       pipeline_mode: phased
       val_pipeline_mode: summary_only
       summary_phase_epochs: 3
-      support_phase_epochs: 1
+      support_phase_epochs: 0
       tool_config_path: null
       completion_callback: recipe.bfcl_meta.meta_callback.BFCLMetaCompletionCallback
       format: hermes
