@@ -57,7 +57,7 @@ Support trajectories from `test_unseen` are allowed at evaluation time because t
 Build pair-level parquet files from the original BFCL multiturn splits:
 
 ```bash
-cd /path/to/bfcl_verl_meta_rl
+cd /path/to/bfcl_verl_meta_rl_new
 python3 recipe/bfcl_meta/preprocess_bfcl_meta_pairs.py \
   --source_dir data/bfcl_multiturn_rl \
   --output_dir data/bfcl_meta_rl
@@ -73,7 +73,7 @@ Runs one support-summary-query chain with the compressed summary prompt and prin
 - query success
 
 ```bash
-cd /path/to/bfcl_verl_meta_rl
+cd /path/to/bfcl_verl_meta_rl_new
 python3 recipe/bfcl_meta/debug_meta_single.py \
   --repo-root . \
   --data-file data/bfcl_meta_rl/test_seen.parquet \
@@ -92,7 +92,7 @@ Model-specific wrappers are provided for:
 - `recipe/bfcl_meta/run_grpo_qwen3_8b.sh`
 
 ```bash
-cd /path/to/bfcl_verl_meta_rl
+cd /path/to/bfcl_verl_meta_rl_new
 bash recipe/bfcl_meta/run_grpo_qwen3_8b.sh
 ```
 
@@ -106,7 +106,7 @@ Optional:
 ### 4. Test
 
 ```bash
-cd /path/to/bfcl_verl_meta_rl
+cd /path/to/bfcl_verl_meta_rl_new
 MODEL_PATH=/path/to/model \
 CKPT_PATH=/path/to/checkpoint \
 SPLIT=seen \
@@ -122,7 +122,7 @@ Evaluation follows the config default `val_pipeline_mode=summary_only`, so test-
 After training, the saved actor checkpoint is still in FSDP shard format. To convert it into a Hugging Face model directory:
 
 ```bash
-cd /path/to/bfcl_verl_meta_rl
+cd /path/to/bfcl_verl_meta_rl_new
 PYTHONPATH=$(pwd) python scripts/legacy_model_merger.py merge \
   --backend fsdp \
   --local_dir checkpoints/bfcl_meta_rl/<experiment_name>/global_step_<step>/actor \
