@@ -8,12 +8,11 @@ from recipe.bfcl_multiturn.bfcl_env import (
     build_system_prompt_with_tools,
 )
 
-SUMMARY_SYSTEM_PROMPT = "You are extracting an experience memo from your own support tool-calling trajectory."
+SUMMARY_SYSTEM_PROMPT = "You are extracting an tool-using guidance from your own support tool-calling trajectory."
 
 SUMMARY_USER_PROMPT_PREFIX = (
-    "First think and analyze the trajectory step-by-step and identify, (i) the exact final failure point(s), (ii) the root cause (not just symptoms), (iii) the hidden preconditions that were violated, (iv) the incorrect assumptions made by the agent. This should be put inside <think> and </think>.\n"
-    "Then, propose a guidance to avoid mistakes in future other tool-calling tasks. Keep your final memo "
-    "concise and in one/two sentence. (Do not reflect the mistake after </think>)\n\n"
+    "First think and analyze the trajectory step-by-step and identify, (i) the exact final failure point(s), (ii) the root cause (not just symptoms), (iii) the hidden preconditions that were violated, (iv) the incorrect assumptions made by the agent. \n"
+    "Then, propose a guidance to avoid mistakes in future other tool-calling tasks. Keep your final guidance concise.\n\n"
     "The guidance potentially include two part\n"
     "-1 guidance to avoid the identified mistakes, such as action-guiding rules, environment-specific constraints, and hidden preconditions\n"
     "-2 high-level and generalized strategy that applies across tasks and tools\n\n"
@@ -51,15 +50,15 @@ def build_task_system_prompt(
 ) -> str:
     base_prompt = build_system_prompt_with_tools(tools)
     if exploration_mode:
-        base_prompt = SUPPORT_EXPLORATION_PREFIX + base_prompt
+        base_prompt = f"{base_prompt}\n\n{SUPPORT_EXPLORATION_PREFIX.strip()}"
     if not experience_summary:
         return base_prompt
     return (
-        "You are given an environment experience memo from a previous task in the same tool-calling environment. "
+        f"{base_prompt}\n\n"
+        "You are given a tool-using guidance extracted from a previous task in the tool-calling environment. "
         "Use it as heuristic guidance when it is relevant.\n\n"
-        "# Environment Experience\n"
-        f"{experience_summary.strip()}\n\n"
-        f"{base_prompt}"
+        "# Guidance\n"
+        f"{experience_summary.strip()}"
     )
 
 
@@ -168,7 +167,7 @@ def build_summary_prompt_messages(
         "\n\nSupport checker summary:\n"
         + f"{checker_summary}\n\n"
         + f"Support outcome: {support_outcome}\n\n"
-        + "Now write the memo."
+        + "Now write the guidance."
     )
 
     def _build_messages(trajectory: str) -> list[dict[str, str]]:
