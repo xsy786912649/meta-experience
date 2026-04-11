@@ -2,6 +2,8 @@
 set -x
 
 PROJECT_DIR="$(pwd)"
+export WANDB_API_KEY="5806b898ce5b350fa77a2975885a5d187bc2bf9e"
+wandb login $WANDB_API_KEY
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
