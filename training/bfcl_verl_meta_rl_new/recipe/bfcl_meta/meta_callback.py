@@ -28,9 +28,10 @@ PIPELINE_PHASED = "phased"
 def _has_explicit_action_output(text: str) -> bool:
     if not text:
         return False
-    if "<tool_call>" in text or "</tool_call>" in text:
+    final_text = text.split("</think>")[-1] if "</think>" in text else text
+    if "<tool_call>" in final_text or "</tool_call>" in final_text:
         return True
-    return bool(re.search(r'\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:', text))
+    return False
 
 
 def _keep_last_token(mask: torch.Tensor) -> torch.Tensor:
