@@ -11,9 +11,9 @@ from recipe.bfcl_multiturn.bfcl_env import (
 SUMMARY_SYSTEM_PROMPT = "You are extracting an tool-using guidance from your own support tool-calling trajectory."
 
 SUMMARY_USER_PROMPT_PREFIX = (
-    "First think and analyze the trajectory step-by-step and identify, (i) the exact final failure point(s), (ii) the root cause (not just symptoms), (iii) the hidden preconditions that were violated, (iv) the incorrect assumptions made by the agent. \n"
+    "First think and analyze the trajectory step-by-step and identify, (i) the exact final failure point(s), (ii) the root cause (not just symptoms), (iii) the hidden preconditions that were violated, (iv) the incorrect assumptions and problematic patterns by the agent. \n"
     "Then, propose a guidance to avoid mistakes in future other tool-calling tasks. Keep your final guidance concise.\n\n"
-    "The guidance potentially include two part\n"
+    "The guidance potentially include two part:\n"
     "-1 guidance to avoid the identified mistakes, such as action-guiding rules, environment-specific constraints, and hidden preconditions\n"
     "-2 high-level and generalized strategy that applies across tasks and tools\n\n"
     "Do not:\n"
@@ -57,7 +57,7 @@ def build_task_system_prompt(
         f"{base_prompt}\n\n"
         "You are given a tool-using guidance extracted from a previous task in the tool-calling environment. "
         "Use it as heuristic guidance when it is relevant.\n\n"
-        "# Guidance\n"
+        "# Guidance:\n"
         f"{experience_summary.strip()}"
     )
 

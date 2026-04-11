@@ -29,9 +29,7 @@ def _has_explicit_action_output(text: str) -> bool:
     if not text:
         return False
     final_text = text.split("</think>")[-1] if "</think>" in text else text
-    if "<tool_call>" in final_text or "</tool_call>" in final_text:
-        return True
-    return False
+    return bool(re.search(r"<tool_call>\s*.*?\s*</tool_call>", final_text, re.DOTALL))
 
 
 def _keep_last_token(mask: torch.Tensor) -> torch.Tensor:
