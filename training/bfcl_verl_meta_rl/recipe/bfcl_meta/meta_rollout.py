@@ -110,7 +110,6 @@ class MetaRolloutEngine:
                 force_quit = True
                 inference_log.append(
                     {
-                        "begin_of_turn_query": current_turn_messages,
                         "step_0": [
                             {
                                 "role": "handler_log",
@@ -208,6 +207,8 @@ class MetaRolloutEngine:
 
                 if self._token_len(messages) > effective_max_model_len:
                     self._rollback_trailing_tool_responses(messages)
+                    if execution_results:
+                        del step_events[-len(execution_results) :]
                     step_events.append(
                         {
                             "role": "handler_log",
@@ -220,9 +221,10 @@ class MetaRolloutEngine:
                 step_idx += 1
 
             inference_log.append(turn_log)
-            state_items = snapshot_state_items(involved_instances)
-            if state_items:
-                inference_log.append(state_items)
+            if not force_quit:
+                state_items = snapshot_state_items(involved_instances)
+                if state_items:
+                    inference_log.append(state_items)
 
             if force_quit:
                 break
