@@ -14,7 +14,7 @@ from tensordict import TensorDict
 from verl.protocol import DataProto
 from verl.workers.rollout.chat_scheduler import ChatCompletionScheduler, ToolCompletionCallback
 
-from recipe.bfcl_meta.meta_env import build_summary_prompt_messages
+from recipe.bfcl_meta.meta_env import build_summary_prompt_messages, build_task_system_prompt
 from recipe.bfcl_meta.meta_rollout import MetaRolloutEngine, parse_summary_generation
 
 PIPELINE_SUMMARY = "summary_only"
@@ -112,6 +112,63 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             max_assistant_turns=self.max_assistant_turns,
         )
 
+    @staticmethod
+    def _format_conversation_as_trajectory(conversation: list[dict[str, str]]) -> str:
+        return "".join(
+            f"<|im_start|>{message.get('role', 'user')}\n{message.get('content', '')}<|im_end|>\n"
+            for message in conversation
+        )
+
+    def _build_minimal_support_conversation(self, support_payload: dict[str, Any]) -> list[dict[str, str]]:
+        system_prompt = build_task_system_prompt(
+            support_payload["function"],
+            experience_summary=None,
+            exploration_mode=True,
+        )
+        conversation = [{"role": "system", "content": system_prompt}]
+        first_turn = support_payload.get("question", [])
+        if first_turn:
+            conversation.extend(copy.deepcopy(first_turn[0]))
+        conversation.append({"role": "assistant", "content": "\n"})
+        return conversation
+
+    def _build_support_exception_result(self, support_payload: dict[str, Any], error_message: str) -> dict[str, Any]:
+        conversation = self._build_minimal_support_conversation(support_payload)
+        return {
+            "success": False,
+            "checker": {
+                "valid": False,
+                "error_type": "support_rollout_exception",
+                "details": {"error": str(error_message)[:600]},
+            },
+            "trajectory_text": self._format_conversation_as_trajectory(conversation),
+            "conversation": conversation,
+        }
+
+    def _normalize_support_result(self, support_payload: dict[str, Any], support_result: dict[str, Any]) -> dict[str, Any]:
+        conversation = support_result.get("conversation") or []
+        if any(message.get("role") == "assistant" for message in conversation):
+            return support_result
+
+        normalized = dict(support_result)
+        minimal_conversation = self._build_minimal_support_conversation(support_payload)
+        normalized["conversation"] = minimal_conversation
+        normalized["trajectory_text"] = self._format_conversation_as_trajectory(minimal_conversation)
+        return normalized
+
+    async def _run_support_rollout_safe(self, support_payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            support_result = await self.rollout_engine.run_task_rollout(
+                payload=support_payload,
+                temperature=self.support_temperature,
+                experience_summary=None,
+                max_model_len=self.support_max_model_len,
+                exploration_mode=True,
+            )
+            return self._normalize_support_result(support_payload, support_result)
+        except Exception as exc:
+            return self._build_support_exception_result(support_payload, str(exc))
+
     def _select_batch_mode(self, validate: bool) -> str:
         requested = self.val_pipeline_mode if validate else self.train_pipeline_mode
         if requested == PIPELINE_PHASED:
@@ -170,13 +227,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         return prepared
 
     async def _prepare_summary_payload(self, payload: dict[str, Any], repeat_count: int) -> dict[str, Any]:
-        support_result = await self.rollout_engine.run_task_rollout(
-            payload=payload["support"],
-            temperature=self.support_temperature,
-            experience_summary=None,
-            max_model_len=self.support_max_model_len,
-            exploration_mode=True,
-        )
+        support_result = await self._run_support_rollout_safe(payload["support"])
         summary_messages = build_summary_prompt_messages(
             tokenizer=self.tokenizer,
             trajectory_text=support_result["trajectory_text"],
@@ -203,16 +254,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
 
     async def _prepare_support_payload(self, payload: dict[str, Any], repeat_count: int) -> dict[str, Any]:
         support_results = await asyncio.gather(
-            *(
-                self.rollout_engine.run_task_rollout(
-                    payload=payload["support"],
-                    temperature=self.support_temperature,
-                    experience_summary=None,
-                    max_model_len=self.support_max_model_len,
-                    exploration_mode=True,
-                )
-                for _ in range(repeat_count)
-            )
+            *(self._run_support_rollout_safe(payload["support"]) for _ in range(repeat_count))
         )
         conversations = [
             build_summary_prompt_messages(
@@ -270,7 +312,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         except Exception:
             query_success = False
             query_ran = False
-        messages.append({"role": "assistant", "content": ""})
+        messages.append({"role": "assistant", "content": "\n"})
         messages.append(
             {
                 "reward": _build_reward_payload(
