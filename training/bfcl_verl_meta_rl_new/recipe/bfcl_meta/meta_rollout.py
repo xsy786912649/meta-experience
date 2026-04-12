@@ -107,7 +107,7 @@ class MetaRolloutEngine:
                 ]
 
             messages.extend(current_turn_messages)
-            if self._token_len(messages) > effective_max_model_len:
+            if self._token_len(messages) >= effective_max_model_len:
                 self._rollback_trailing_users(messages, min_len=system_prompt_len)
                 force_quit = True
                 inference_log.append(
@@ -219,7 +219,7 @@ class MetaRolloutEngine:
                     messages.append(_to_tool_response_message(execution_result))
                     step_events.append({"role": "tool", "content": execution_result})
 
-                if self._token_len(messages) > effective_max_model_len:
+                if self._token_len(messages) >= effective_max_model_len:
                     self._rollback_trailing_tool_responses(messages)
                     if execution_results:
                         del step_events[-len(execution_results) :]
