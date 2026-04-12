@@ -112,6 +112,49 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             max_assistant_turns=self.max_assistant_turns,
         )
 
+    def _log_request_error_context(
+        self,
+        *,
+        payload: dict[str, Any],
+        request_meta: dict[str, Any] | None,
+        messages: list[dict[str, str]],
+        error_type: str,
+        error_message: str,
+    ) -> None:
+        try:
+            pipeline_mode = request_meta["pipeline_mode"] if request_meta else PIPELINE_SUMMARY
+            local_tokens = len(
+                self.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=True,
+                    add_generation_prompt=True,
+                )
+            )
+            role_summaries = [
+                f"{message.get('role', 'unknown')}:{len(str(message.get('content', '')))}"
+                for message in messages
+            ]
+            last_content = str(messages[-1].get("content", "")) if messages else ""
+            print(
+                "[bfcl_meta_request_error] "
+                f"meta_instance_id={payload.get('meta_instance_id', 'unknown')} "
+                f"pipeline_mode={pipeline_mode} "
+                f"error_type={error_type} "
+                f"local_tokens={local_tokens} "
+                f"max_model_len={self.max_model_len} "
+                f"message_count={len(messages)} "
+                f"roles={role_summaries} "
+                f"last_content_tail={last_content[-300:]!r} "
+                f"error={error_message}"
+            )
+        except Exception as log_exc:
+            print(
+                "[bfcl_meta_request_error_logging_failed] "
+                f"meta_instance_id={payload.get('meta_instance_id', 'unknown')} "
+                f"error_type={error_type} "
+                f"log_error={log_exc!r}"
+            )
+
     @staticmethod
     def _format_conversation_as_trajectory(conversation: list[dict[str, str]]) -> str:
         return "".join(
@@ -296,7 +339,6 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             support_success=support_result["success"],
             checker=support_result["checker"],
             max_prompt_tokens=self.summary_prompt_budget,
-            debug_meta_instance_id=payload["meta_instance_id"],
         )
         conversations = []
         for _ in range(repeat_count):
@@ -326,7 +368,6 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
                 support_success=result["success"],
                 checker=result["checker"],
                 max_prompt_tokens=self.summary_prompt_budget,
-                debug_meta_instance_id=payload["meta_instance_id"],
             )
             for result in support_results
         ]
@@ -356,6 +397,13 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         payload = total_messages if isinstance(total_messages, dict) else json.loads(total_messages)
         prepared = self._prepared_samples.get(payload["meta_instance_id"])
         request_meta = await self._consume_prepared_request(messages)
+        self._log_request_error_context(
+            payload=payload,
+            request_meta=request_meta,
+            messages=messages,
+            error_type=error_type,
+            error_message=error_message,
+        )
         if request_meta and request_meta.get("pipeline_mode") == PIPELINE_SUPPORT:
             messages[:] = copy.deepcopy(request_meta["support_conversation"])
         if self.disable_query_memo:
