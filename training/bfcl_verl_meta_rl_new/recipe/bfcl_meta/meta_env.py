@@ -158,6 +158,7 @@ def build_summary_prompt_messages(
     support_success: bool,
     checker: dict[str, Any],
     max_prompt_tokens: int,
+    debug_meta_instance_id: str | None = None,
 ) -> list[dict[str, str]]:
     checker_summary = summarize_checker_result(checker)
     support_outcome = "success" if support_success else "failure"
@@ -197,7 +198,21 @@ def build_summary_prompt_messages(
     base_prompt_tokens = _full_prompt_tokens(_build_messages(""))
     trajectory_budget = max(0, max_prompt_tokens - base_prompt_tokens)
     clipped_trajectory = truncate_prefix_by_tokens(tokenizer, state_free_trajectory, trajectory_budget)
-    return _build_messages(clipped_trajectory)
+    final_messages = _build_messages(clipped_trajectory)
+    final_tokens = _full_prompt_tokens(final_messages)
+    if final_tokens > max_prompt_tokens:
+        print(
+            "[bfcl_meta_summary_over_budget] "
+            f"meta_instance_id={debug_meta_instance_id or 'unknown'} "
+            f"final_tokens={final_tokens} "
+            f"budget={max_prompt_tokens} "
+            f"base_prompt_tokens={base_prompt_tokens} "
+            f"trajectory_budget={trajectory_budget} "
+            f"orig_trajectory_tokens={len(tokenizer(trajectory_text, add_special_tokens=False)['input_ids'])} "
+            f"state_free_trajectory_tokens={len(tokenizer(state_free_trajectory, add_special_tokens=False)['input_ids'])} "
+            f"clipped_trajectory_tokens={len(tokenizer(clipped_trajectory, add_special_tokens=False)['input_ids'])}"
+        )
+    return final_messages
 
 
 def _format_messages(messages: list[dict]) -> str:

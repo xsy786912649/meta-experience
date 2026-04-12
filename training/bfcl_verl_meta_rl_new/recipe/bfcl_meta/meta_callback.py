@@ -296,6 +296,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             support_success=support_result["success"],
             checker=support_result["checker"],
             max_prompt_tokens=self.summary_prompt_budget,
+            debug_meta_instance_id=payload["meta_instance_id"],
         )
         conversations = []
         for _ in range(repeat_count):
@@ -325,6 +326,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
                 support_success=result["success"],
                 checker=result["checker"],
                 max_prompt_tokens=self.summary_prompt_budget,
+                debug_meta_instance_id=payload["meta_instance_id"],
             )
             for result in support_results
         ]
