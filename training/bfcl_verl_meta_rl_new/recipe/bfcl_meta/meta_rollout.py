@@ -65,6 +65,7 @@ class MetaRolloutEngine:
         experience_summary: str | None,
         max_model_len: int | None = None,
         exploration_mode: bool = False,
+        preserve_truncated_assistant: bool = False,
     ) -> dict[str, Any]:
         effective_max_model_len = int(max_model_len) if max_model_len is not None else self.max_model_len
         run_namespace = f"meta_{uuid.uuid4().hex[:10]}"
@@ -166,15 +167,27 @@ class MetaRolloutEngine:
                     force_quit = True
                     break
 
-                finish_reason = completions.choices[0].finish_reason
                 content = _normalize_tool_calls(completions.choices[0].message.content or "")
+                finish_reason = completions.choices[0].finish_reason
+                if finish_reason == "length":
+                    if preserve_truncated_assistant:
+                        messages.append({"role": "assistant", "content": content})
+                        step_events.append({"role": "assistant", "content": content})
+                        assistant_turns += 1
+                    else:
+                        self._rollback_trailing_users(messages, min_len=system_prompt_len)
+                    step_events.append(
+                        {
+                            "role": "handler_log",
+                            "content": "Model generation hit length limit during support/query rollout.",
+                        }
+                    )
+                    force_quit = True
+                    break
+
                 messages.append({"role": "assistant", "content": content})
                 step_events.append({"role": "assistant", "content": content})
                 assistant_turns += 1
-
-                if finish_reason == "length":
-                    force_quit = True
-                    break
 
                 try:
                     decoded_calls = decode_tool_calls(content)

@@ -126,9 +126,20 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             exploration_mode=True,
         )
         conversation = [{"role": "system", "content": system_prompt}]
-        first_turn = support_payload.get("question", [])
-        if first_turn:
-            conversation.extend(copy.deepcopy(first_turn[0]))
+        conversation.append({"role": "assistant", "content": "\n"})
+        return conversation
+
+    def _build_minimal_query_conversation(
+        self,
+        query_payload: dict[str, Any],
+        experience_summary: str | None,
+    ) -> list[dict[str, str]]:
+        system_prompt = build_task_system_prompt(
+            query_payload["function"],
+            experience_summary=experience_summary,
+            exploration_mode=False,
+        )
+        conversation = [{"role": "system", "content": system_prompt}]
         conversation.append({"role": "assistant", "content": "\n"})
         return conversation
 
@@ -156,6 +167,40 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         normalized["trajectory_text"] = self._format_conversation_as_trajectory(minimal_conversation)
         return normalized
 
+    def _build_query_exception_result(
+        self,
+        query_payload: dict[str, Any],
+        experience_summary: str | None,
+        error_message: str,
+    ) -> dict[str, Any]:
+        conversation = self._build_minimal_query_conversation(query_payload, experience_summary)
+        return {
+            "success": False,
+            "checker": {
+                "valid": False,
+                "error_type": "query_rollout_exception",
+                "details": {"error": str(error_message)[:600]},
+            },
+            "trajectory_text": self._format_conversation_as_trajectory(conversation),
+            "conversation": conversation,
+        }
+
+    def _normalize_query_result(
+        self,
+        query_payload: dict[str, Any],
+        experience_summary: str | None,
+        query_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        conversation = query_result.get("conversation") or []
+        if any(message.get("role") == "assistant" for message in conversation):
+            return query_result
+
+        normalized = dict(query_result)
+        minimal_conversation = self._build_minimal_query_conversation(query_payload, experience_summary)
+        normalized["conversation"] = minimal_conversation
+        normalized["trajectory_text"] = self._format_conversation_as_trajectory(minimal_conversation)
+        return normalized
+
     async def _run_support_rollout_safe(self, support_payload: dict[str, Any]) -> dict[str, Any]:
         try:
             support_result = await self.rollout_engine.run_task_rollout(
@@ -164,10 +209,27 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
                 experience_summary=None,
                 max_model_len=self.support_max_model_len,
                 exploration_mode=True,
+                preserve_truncated_assistant=True,
             )
             return self._normalize_support_result(support_payload, support_result)
         except Exception as exc:
             return self._build_support_exception_result(support_payload, str(exc))
+
+    async def _run_query_rollout_safe(
+        self,
+        query_payload: dict[str, Any],
+        experience_summary: str | None,
+    ) -> dict[str, Any]:
+        try:
+            query_result = await self.rollout_engine.run_task_rollout(
+                payload=query_payload,
+                temperature=self.query_temperature,
+                experience_summary=experience_summary,
+                preserve_truncated_assistant=False,
+            )
+            return self._normalize_query_result(query_payload, experience_summary, query_result)
+        except Exception as exc:
+            return self._build_query_exception_result(query_payload, experience_summary, str(exc))
 
     def _select_batch_mode(self, validate: bool) -> str:
         requested = self.val_pipeline_mode if validate else self.train_pipeline_mode
@@ -298,20 +360,10 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             query_summary_text = None
         else:
             query_summary_text = "empty"
-        query_success = False
-        query_ran = False
         used_memo = query_summary_text is not None
-        try:
-            query_result = await self.rollout_engine.run_task_rollout(
-                payload=payload["query"],
-                temperature=self.query_temperature,
-                experience_summary=query_summary_text,
-            )
-            query_success = bool(query_result["success"])
-            query_ran = True
-        except Exception:
-            query_success = False
-            query_ran = False
+        query_result = await self._run_query_rollout_safe(payload["query"], query_summary_text)
+        query_success = bool(query_result["success"])
+        query_ran = True
         messages.append({"role": "assistant", "content": "\n"})
         messages.append(
             {
@@ -352,11 +404,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         else:
             query_summary_text = full_output if full_output else "empty"
         used_memo = query_summary_text is not None
-        query_result = await self.rollout_engine.run_task_rollout(
-            payload=payload["query"],
-            temperature=self.query_temperature,
-            experience_summary=query_summary_text,
-        )
+        query_result = await self._run_query_rollout_safe(payload["query"], query_summary_text)
         reward = 1.0 if query_result["success"] else -0.001
         if explicit_action_output:
             reward = -0.5
