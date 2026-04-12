@@ -19,6 +19,7 @@ from recipe.bfcl_meta.meta_rollout import MetaRolloutEngine, parse_summary_gener
 
 PIPELINE_SUMMARY = "summary_only"
 PIPELINE_SUPPORT = "support_only"
+PIPELINE_QUERY = "query_only"
 PIPELINE_PHASED = "phased"
 
 
@@ -101,6 +102,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         )
         self._prepared_samples: dict[str, dict[str, Any]] = {}
         self._prepared_requests: dict[str, list[dict[str, Any]]] = {}
+        self._query_training_examples: dict[str, list[dict[str, Any]]] = {}
         self._prepared_request_lock = asyncio.Lock()
         self._direct_server_addresses = [address for _, address in scheduler.weighted_addresses]
         self._direct_request_counter = 0
@@ -161,6 +163,38 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             f"<|im_start|>{message.get('role', 'user')}\n{message.get('content', '')}<|im_end|>\n"
             for message in conversation
         )
+
+    def _query_example_key(self, meta_instance_id: str, prompt_messages: list[dict[str, str]]) -> str:
+        return f"{meta_instance_id}:{self._conversation_key(prompt_messages)}"
+
+    def _store_query_training_example(
+        self,
+        meta_instance_id: str,
+        prompt_messages: list[dict[str, str]],
+        conversation: list[dict[str, str]],
+        reward_payload: dict[str, Any],
+    ) -> None:
+        key = self._query_example_key(meta_instance_id, prompt_messages)
+        self._query_training_examples.setdefault(key, []).append(
+            {
+                "conversation": copy.deepcopy(conversation),
+                "reward": copy.deepcopy(reward_payload),
+            }
+        )
+
+    def _consume_query_training_example(
+        self,
+        meta_instance_id: str,
+        prompt_messages: list[dict[str, str]],
+    ) -> dict[str, Any] | None:
+        key = self._query_example_key(meta_instance_id, prompt_messages)
+        queue = self._query_training_examples.get(key)
+        if not queue:
+            return None
+        example = queue.pop(0)
+        if not queue:
+            self._query_training_examples.pop(key, None)
+        return example
 
     def _build_minimal_support_conversation(self, support_payload: dict[str, Any]) -> list[dict[str, str]]:
         system_prompt = build_task_system_prompt(
@@ -414,6 +448,21 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         query_result = await self._run_query_rollout_safe(payload["query"], query_summary_text)
         query_success = bool(query_result["success"])
         query_ran = True
+        query_reward_payload = _build_reward_payload(
+            1.0 if query_success else -0.001,
+            query_success=query_success,
+            query_ran=query_ran,
+            explicit_action_output=False,
+            used_memo=used_memo,
+            summary_context_text=query_summary_text or "",
+        )
+        if request_meta and request_meta.get("pipeline_mode") == PIPELINE_SUMMARY:
+            self._store_query_training_example(
+                payload["meta_instance_id"],
+                messages,
+                query_result["conversation"],
+                query_reward_payload,
+            )
         messages.append({"role": "assistant", "content": "\n"})
         messages.append(
             {
@@ -455,9 +504,26 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             query_summary_text = full_output if full_output else "empty"
         used_memo = query_summary_text is not None
         query_result = await self._run_query_rollout_safe(payload["query"], query_summary_text)
-        reward = 1.0 if query_result["success"] else -0.001
+        query_success = bool(query_result["success"])
+        query_reward = 1.0 if query_success else -0.001
+        reward = query_reward
         if explicit_action_output:
             reward = -0.5
+        query_reward_payload = _build_reward_payload(
+            query_reward,
+            query_success=query_success,
+            query_ran=True,
+            explicit_action_output=False,
+            used_memo=used_memo,
+            summary_context_text=query_summary_text or "",
+        )
+        if pipeline_mode == PIPELINE_SUMMARY:
+            self._store_query_training_example(
+                payload["meta_instance_id"],
+                messages,
+                query_result["conversation"],
+                query_reward_payload,
+            )
 
         if pipeline_mode == PIPELINE_SUPPORT and request_meta is not None:
             messages[:] = copy.deepcopy(request_meta["support_conversation"])
@@ -467,7 +533,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             {
                 "reward": _build_reward_payload(
                     reward,
-                    query_success=bool(query_result["success"]),
+                    query_success=query_success,
                     query_ran=True,
                     explicit_action_output=explicit_action_output,
                     used_memo=used_memo,
@@ -527,7 +593,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             cur_messages = conversation[: message_idx + 1]
             role = conversation[message_idx].get("role")
             include_assistant_content = role == "assistant" and (
-                pipeline_mode == PIPELINE_SUPPORT or message_idx == len(conversation) - 1
+                pipeline_mode in {PIPELINE_SUPPORT, PIPELINE_QUERY} or message_idx == len(conversation) - 1
             )
 
             prev_text = self.tokenizer.apply_chat_template(
@@ -633,49 +699,47 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
 
         batch_mode = str(expanded_pipeline_modes[0]) if len(expanded_pipeline_modes) > 0 else PIPELINE_SUMMARY
         if batch_mode == PIPELINE_SUMMARY:
-            prompts = [conversation[:-1] for conversation in batch_conversations]
-            prompt_texts = [
-                self.tokenizer.apply_chat_template(prompt, add_generation_prompt=True, tokenize=False)
-                for prompt in prompts
-            ]
-            sequences = [
-                self.tokenizer.apply_chat_template(conversation, add_generation_prompt=False, tokenize=False)
-                for conversation in batch_conversations
-            ]
-            responses = [sequence[len(prompt_texts[i]) :] for i, sequence in enumerate(sequences)]
+            expanded_conversations = []
+            expanded_rewards = []
+            expanded_modes = []
+            expanded_uids = []
 
-            prompt_tensors = self.tokenizer(prompt_texts, return_tensors="pt", padding="longest", padding_side="left")
-            response_tensors = self.tokenizer(responses, return_tensors="pt", padding="longest", padding_side="right")
+            for conversation, reward, total_messages in zip(batch_conversations, batch_reward, batch_total_messages):
+                payload = total_messages if isinstance(total_messages, dict) else json.loads(total_messages)
+                meta_instance_id = payload["meta_instance_id"]
 
-            response_mask = response_tensors["attention_mask"].to(dtype=torch.float32)
-            reward_mask = _keep_last_token(response_mask)
-            input_ids = torch.cat([prompt_tensors["input_ids"], response_tensors["input_ids"]], dim=1)
-            attention_mask = torch.cat(
-                [prompt_tensors["attention_mask"], response_tensors["attention_mask"]],
-                dim=1,
-            )
-            position_ids = (attention_mask.cumsum(dim=1) - 1).clamp_min(0) * attention_mask
+                expanded_conversations.append(conversation)
+                expanded_rewards.append(reward)
+                expanded_modes.append(PIPELINE_SUMMARY)
+                expanded_uids.append(f"{meta_instance_id}::summary")
 
-            batch_td = TensorDict(
-                {
-                    "prompts": prompt_tensors["input_ids"],
-                    "responses": response_tensors["input_ids"],
-                    "response_mask": response_mask,
-                    "reward_mask": reward_mask,
-                    "input_ids": input_ids,
-                    "attention_mask": attention_mask,
-                    "position_ids": position_ids,
-                },
-                batch_size=len(input_ids),
-            )
-            rewards = np.array([reward for reward in batch_reward], dtype=object)
-            return DataProto(
-                batch=batch_td,
-                non_tensor_batch={
-                    "__reward__": rewards,
-                    "pipeline_mode": expanded_pipeline_modes,
-                },
-            )
+                query_example = self._consume_query_training_example(meta_instance_id, conversation[:-1])
+                if query_example is None:
+                    fallback_summary = None if self.disable_query_memo else "empty"
+                    query_conversation = self._build_minimal_query_conversation(payload["query"], fallback_summary)
+                    query_reward = _build_reward_payload(
+                        -0.001,
+                        query_success=False,
+                        query_ran=False,
+                        explicit_action_output=False,
+                        used_memo=fallback_summary is not None,
+                        summary_context_text=fallback_summary or "",
+                    )
+                else:
+                    query_conversation = query_example["conversation"]
+                    query_reward = query_example["reward"]
+
+                expanded_conversations.append(query_conversation)
+                expanded_rewards.append(query_reward)
+                expanded_modes.append(PIPELINE_QUERY)
+                expanded_uids.append(f"{meta_instance_id}::query")
+
+            batch_conversations = expanded_conversations
+            batch_reward = expanded_rewards
+            expanded_pipeline_modes = np.array(expanded_modes, dtype=object)
+            expanded_uids = np.array(expanded_uids, dtype=object)
+        else:
+            expanded_uids = None
 
         prompt_id_rows = []
         response_id_rows = []
@@ -722,5 +786,6 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             non_tensor_batch={
                 "__reward__": rewards,
                 "pipeline_mode": expanded_pipeline_modes,
+                **({"uid": expanded_uids} if expanded_uids is not None else {}),
             },
         )

@@ -1293,11 +1293,27 @@ class RayPPOTrainer:
                             del gen_baseline_batch, gen_baseline_output
 
                     if not repeat_sampling_sglang_grpo:
-                        batch.non_tensor_batch["uid"] = np.array(
-                            [str(uuid.uuid4()) for _ in range(len(batch.batch))], dtype=object
-                        )
-                        # repeat to align with repeated responses in rollout
-                        batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
+                        original_batch_size = len(batch.batch)
+                        generated_batch_size = len(gen_batch_output.batch)
+                        if generated_batch_size % original_batch_size != 0:
+                            raise ValueError(
+                                f"Generated batch size {generated_batch_size} is not divisible by input batch size "
+                                f"{original_batch_size}"
+                            )
+
+                        repeat_times = generated_batch_size // original_batch_size
+                        prompt_uids = np.array([str(uuid.uuid4()) for _ in range(original_batch_size)], dtype=object)
+                        batch.non_tensor_batch["uid"] = prompt_uids
+                        batch = batch.repeat(repeat_times=repeat_times, interleave=True)
+
+                        generated_uids = gen_batch_output.non_tensor_batch.get("uid")
+                        if generated_uids is not None:
+                            if len(generated_uids) != len(batch.batch):
+                                raise ValueError(
+                                    f"Generated uid count {len(generated_uids)} does not match repeated batch size "
+                                    f"{len(batch.batch)}"
+                                )
+                            batch.non_tensor_batch["uid"] = generated_uids
 
                     batch = batch.union(gen_batch_output)
 

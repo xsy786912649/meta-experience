@@ -121,10 +121,14 @@ class StepRewardManager:
                 reward = reward[:num_turns_model]
 
             # Collapse to trajectory-level terminal reward:
-            # success -> 1.0, failure -> -0.001, independent of turn count.
+            # explicit format violation -> -0.5, success -> 1.0, failure -> -0.001.
+            has_hard_format_violation = any(x <= -0.5 for x in reward)
             is_success = any(x > 0 for x in reward)
             reward = [0.0] * num_turns_model
-            reward[-1] = 1.0 if is_success else -0.001
+            if has_hard_format_violation:
+                reward[-1] = -0.5
+            else:
+                reward[-1] = 1.0 if is_success else -0.001
 
             #print("reward:", reward)
             #print("num_turns_model:", num_turns_model)
