@@ -148,6 +148,24 @@ def truncate_prefix_by_tokens(tokenizer, text: str, max_tokens: int) -> str:
     return tokenizer.decode(prefix_ids, skip_special_tokens=False) + marker
 
 
+def truncate_text_by_tokens(tokenizer, text: str, max_tokens: int, marker: str) -> str:
+    if max_tokens <= 0:
+        return ""
+    token_ids = tokenizer(text, add_special_tokens=False)["input_ids"]
+    if len(token_ids) <= max_tokens:
+        return text
+
+    marker_ids = tokenizer(marker, add_special_tokens=False)["input_ids"]
+    marker_budget = len(marker_ids)
+    if max_tokens <= marker_budget + 8:
+        clipped_ids = token_ids[:max_tokens]
+        return tokenizer.decode(clipped_ids, skip_special_tokens=False)
+
+    prefix_budget = max_tokens - marker_budget
+    prefix_ids = token_ids[:prefix_budget]
+    return tokenizer.decode(prefix_ids, skip_special_tokens=False) + marker
+
+
 def remove_state_info_blocks(text: str) -> str:
     return re.sub(r"<\|im_start\|>state_info\n.*?\n<\|im_end\|>\n?", "", text, flags=re.DOTALL)
 
@@ -163,17 +181,20 @@ def build_summary_prompt_messages(
     support_outcome = "success" if support_success else "failure"
 
     user_prefix = SUMMARY_USER_PROMPT_PREFIX + "Support trajectory:\n"
-    user_suffix = (
-        "\n\nSupport checker summary:\n"
-        + f"{checker_summary}\n\n"
+    user_suffix_prefix = "\n\nSupport checker summary:\n"
+    user_suffix_tail = (
+        "\n\n"
         + f"Support outcome: {support_outcome}\n\n"
         + "Now write the guidance."
     )
 
-    def _build_messages(trajectory: str) -> list[dict[str, str]]:
+    def _build_messages(trajectory: str, checker_summary_text: str) -> list[dict[str, str]]:
         return [
             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prefix + trajectory + user_suffix},
+            {
+                "role": "user",
+                "content": user_prefix + trajectory + user_suffix_prefix + checker_summary_text + user_suffix_tail,
+            },
         ]
 
     def _full_prompt_tokens(messages: list[dict[str, str]]) -> int:
@@ -185,19 +206,30 @@ def build_summary_prompt_messages(
             )
         )
 
-    prompt_messages = _build_messages(trajectory_text)
+    prompt_messages = _build_messages(trajectory_text, checker_summary)
     if _full_prompt_tokens(prompt_messages) <= max_prompt_tokens:
         return prompt_messages
 
     state_free_trajectory = remove_state_info_blocks(trajectory_text)
-    prompt_messages = _build_messages(state_free_trajectory)
+    prompt_messages = _build_messages(state_free_trajectory, checker_summary)
     if _full_prompt_tokens(prompt_messages) <= max_prompt_tokens:
         return prompt_messages
 
-    base_prompt_tokens = _full_prompt_tokens(_build_messages(""))
+    empty_trajectory_messages = _build_messages("", checker_summary)
+    if _full_prompt_tokens(empty_trajectory_messages) > max_prompt_tokens:
+        checker_overhead_tokens = _full_prompt_tokens(_build_messages("", ""))
+        checker_budget = max(0, max_prompt_tokens - checker_overhead_tokens)
+        checker_summary = truncate_text_by_tokens(
+            tokenizer,
+            checker_summary,
+            checker_budget,
+            "\n[checker summary truncated]\n",
+        )
+
+    base_prompt_tokens = _full_prompt_tokens(_build_messages("", checker_summary))
     trajectory_budget = max(0, max_prompt_tokens - base_prompt_tokens)
     clipped_trajectory = truncate_prefix_by_tokens(tokenizer, state_free_trajectory, trajectory_budget)
-    return _build_messages(clipped_trajectory)
+    return _build_messages(clipped_trajectory, checker_summary)
 
 
 def _format_messages(messages: list[dict]) -> str:
