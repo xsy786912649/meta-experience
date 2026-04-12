@@ -252,16 +252,34 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         request_meta = await self._consume_prepared_request(messages)
         if request_meta and request_meta.get("pipeline_mode") == PIPELINE_SUPPORT:
             messages[:] = copy.deepcopy(request_meta["support_conversation"])
+        if self.disable_query_memo:
+            query_summary_text = None
+        else:
+            query_summary_text = "empty"
+        query_success = False
+        query_ran = False
+        used_memo = query_summary_text is not None
+        try:
+            query_result = await self.rollout_engine.run_task_rollout(
+                payload=payload["query"],
+                temperature=self.query_temperature,
+                experience_summary=query_summary_text,
+            )
+            query_success = bool(query_result["success"])
+            query_ran = True
+        except Exception:
+            query_success = False
+            query_ran = False
         messages.append({"role": "assistant", "content": ""})
         messages.append(
             {
                 "reward": _build_reward_payload(
-                    -0.001,
-                    query_success=False,
-                    query_ran=False,
+                    1.0 if query_success else -0.001,
+                    query_success=query_success,
+                    query_ran=query_ran,
                     explicit_action_output=False,
-                    used_memo=False,
-                    summary_context_text="",
+                    used_memo=used_memo,
+                    summary_context_text=query_summary_text or "",
                 )
             }
         )
@@ -287,11 +305,15 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         full_output, summary_context_text = parse_summary_generation(completions)
 
         explicit_action_output = _has_explicit_action_output(full_output)
-        used_memo = not self.disable_query_memo and bool(summary_context_text)
+        if self.disable_query_memo:
+            query_summary_text = None
+        else:
+            query_summary_text = full_output if full_output else "empty"
+        used_memo = query_summary_text is not None
         query_result = await self.rollout_engine.run_task_rollout(
             payload=payload["query"],
             temperature=self.query_temperature,
-            experience_summary=None if self.disable_query_memo else (summary_context_text or None),
+            experience_summary=query_summary_text,
         )
         reward = 1.0 if query_result["success"] else -0.001
         if explicit_action_output:
@@ -309,7 +331,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
                     query_ran=True,
                     explicit_action_output=explicit_action_output,
                     used_memo=used_memo,
-                    summary_context_text=summary_context_text,
+                    summary_context_text=query_summary_text or "",
                 )
             }
         )
