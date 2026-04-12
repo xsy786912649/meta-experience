@@ -27,6 +27,10 @@ echo "[bfcl_meta_compare] run_root=$RUN_ROOT"
 TRAIN_FILE="$DATA_DIR/train.parquet"
 TRAIN_FILES="['$TRAIN_FILE']"
 
+ulimit -n 65535
+export VLLM_USE_V1=1
+ray stop --force
+
 resolve_val_file() {
   local dataset="$1"
   case "$dataset" in
