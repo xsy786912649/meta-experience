@@ -98,7 +98,13 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             config.actor_rollout_ref.rollout.multi_turn.get("support_temperature", 1.0)
         )
         self.query_temperature = float(
-            config.actor_rollout_ref.rollout.multi_turn.get("query_temperature", 0.0)
+            config.actor_rollout_ref.rollout.multi_turn.get("query_temperature", 1.0)
+        )
+        self.val_support_temperature = float(
+            config.actor_rollout_ref.rollout.multi_turn.get("val_support_temperature", 0.0)
+        )
+        self.val_query_temperature = float(
+            config.actor_rollout_ref.rollout.multi_turn.get("val_query_temperature", 0.0)
         )
         self._prepared_samples: dict[str, dict[str, Any]] = {}
         self._prepared_requests: dict[str, list[dict[str, Any]]] = {}
@@ -296,17 +302,24 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         self,
         query_payload: dict[str, Any],
         experience_summary: str | None,
+        temperature: float,
     ) -> dict[str, Any]:
         try:
             query_result = await self.rollout_engine.run_task_rollout(
                 payload=query_payload,
-                temperature=self.query_temperature,
+                temperature=temperature,
                 experience_summary=experience_summary,
                 preserve_truncated_assistant=False,
             )
             return self._normalize_query_result(query_payload, experience_summary, query_result)
         except Exception as exc:
             return self._build_query_exception_result(query_payload, experience_summary, str(exc))
+
+    def _select_support_temperature(self, validate: bool) -> float:
+        return self.val_support_temperature if validate else self.support_temperature
+
+    def _select_query_temperature(self, validate: bool) -> float:
+        return self.val_query_temperature if validate else self.query_temperature
 
     def _select_batch_mode(self, validate: bool) -> str:
         requested = self.val_pipeline_mode if validate else self.train_pipeline_mode
@@ -355,18 +368,26 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             for payload in batch.non_tensor_batch["total_messages"]
         ]
 
+        validate = bool(batch.meta_info.get("validate", False))
         if batch_mode == PIPELINE_SUMMARY:
-            results = await asyncio.gather(*(self._prepare_summary_payload(payload, repeat_count=n) for payload in payloads))
+            results = await asyncio.gather(
+                *(self._prepare_summary_payload(payload, repeat_count=n, validate=validate) for payload in payloads)
+            )
         else:
-            results = await asyncio.gather(*(self._prepare_support_payload(payload, repeat_count=n) for payload in payloads))
+            results = await asyncio.gather(
+                *(self._prepare_support_payload(payload, repeat_count=n, validate=validate) for payload in payloads)
+            )
 
         for result in results:
             self._prepared_samples[result["meta_instance_id"]] = {"remaining": result["remaining"]}
             prepared.extend(result["conversations"])
         return prepared
 
-    async def _prepare_summary_payload(self, payload: dict[str, Any], repeat_count: int) -> dict[str, Any]:
-        support_result = await self._run_support_rollout_safe(payload["support"])
+    async def _prepare_summary_payload(self, payload: dict[str, Any], repeat_count: int, validate: bool) -> dict[str, Any]:
+        support_result = await self._run_support_rollout_safe_with_temperature(
+            payload["support"],
+            self._select_support_temperature(validate),
+        )
         summary_messages = build_summary_prompt_messages(
             tokenizer=self.tokenizer,
             trajectory_text=support_result["trajectory_text"],
@@ -382,6 +403,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
                 {
                     "pipeline_mode": PIPELINE_SUMMARY,
                     "meta_instance_id": payload["meta_instance_id"],
+                    "validate": validate,
                 },
             )
             conversations.append(prepared_conversation)
@@ -391,9 +413,15 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             "remaining": repeat_count,
         }
 
-    async def _prepare_support_payload(self, payload: dict[str, Any], repeat_count: int) -> dict[str, Any]:
+    async def _prepare_support_payload(self, payload: dict[str, Any], repeat_count: int, validate: bool) -> dict[str, Any]:
         support_results = await asyncio.gather(
-            *(self._run_support_rollout_safe(payload["support"]) for _ in range(repeat_count))
+            *(
+                self._run_support_rollout_safe_with_temperature(
+                    payload["support"],
+                    self._select_support_temperature(validate),
+                )
+                for _ in range(repeat_count)
+            )
         )
         conversations = [
             build_summary_prompt_messages(
@@ -412,6 +440,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
                     "pipeline_mode": PIPELINE_SUPPORT,
                     "meta_instance_id": payload["meta_instance_id"],
                     "support_conversation": copy.deepcopy(support_result["conversation"]),
+                    "validate": validate,
                 },
             )
         return {
@@ -419,6 +448,24 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             "conversations": conversations,
             "remaining": repeat_count,
         }
+
+    async def _run_support_rollout_safe_with_temperature(
+        self,
+        support_payload: dict[str, Any],
+        temperature: float,
+    ) -> dict[str, Any]:
+        try:
+            support_result = await self.rollout_engine.run_task_rollout(
+                payload=support_payload,
+                temperature=temperature,
+                experience_summary=None,
+                max_model_len=self.support_max_model_len,
+                exploration_mode=True,
+                preserve_truncated_assistant=True,
+            )
+            return self._normalize_support_result(support_payload, support_result)
+        except Exception as exc:
+            return self._build_support_exception_result(support_payload, str(exc))
 
     async def handle_request_error(
         self,
@@ -445,7 +492,12 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         else:
             query_summary_text = "empty"
         used_memo = query_summary_text is not None
-        query_result = await self._run_query_rollout_safe(payload["query"], query_summary_text)
+        validate = bool(request_meta.get("validate", False)) if request_meta else False
+        query_result = await self._run_query_rollout_safe(
+            payload["query"],
+            query_summary_text,
+            self._select_query_temperature(validate),
+        )
         query_success = bool(query_result["success"])
         query_ran = True
         query_reward_payload = _build_reward_payload(
@@ -503,7 +555,12 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         else:
             query_summary_text = full_output if full_output else "empty"
         used_memo = query_summary_text is not None
-        query_result = await self._run_query_rollout_safe(payload["query"], query_summary_text)
+        validate = bool(request_meta.get("validate", False)) if request_meta else False
+        query_result = await self._run_query_rollout_safe(
+            payload["query"],
+            query_summary_text,
+            self._select_query_temperature(validate),
+        )
         query_success = bool(query_result["success"])
         query_reward = 1.0 if query_success else -0.001
         reward = query_reward

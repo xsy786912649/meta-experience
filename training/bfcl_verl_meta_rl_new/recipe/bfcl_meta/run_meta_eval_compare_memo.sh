@@ -74,9 +74,12 @@ run_eval_mode() {
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.multi_turn.disable_query_memo="$disable_query_memo" \
-    actor_rollout_ref.rollout.multi_turn.support_temperature=1.0 \
-    actor_rollout_ref.rollout.multi_turn.query_temperature=1.0 \
-    actor_rollout_ref.rollout.val_kwargs.temperature=1.0 \
+    actor_rollout_ref.rollout.temperature=0.0 \
+    actor_rollout_ref.rollout.multi_turn.support_temperature=0.0 \
+    actor_rollout_ref.rollout.multi_turn.query_temperature=0.0 \
+    actor_rollout_ref.rollout.multi_turn.val_support_temperature=0.0 \
+    actor_rollout_ref.rollout.multi_turn.val_query_temperature=0.0 \
+    actor_rollout_ref.rollout.val_kwargs.temperature=0.0 \
     actor_rollout_ref.rollout.val_kwargs.n=1 \
     actor_rollout_ref.model.path="$MODEL_PATH" \
     trainer.n_gpus_per_node="$NGPU" \

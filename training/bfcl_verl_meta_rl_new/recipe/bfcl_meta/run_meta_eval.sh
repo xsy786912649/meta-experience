@@ -35,6 +35,12 @@ python3 -m verl.trainer.main_ppo \
   data.train_files="$TRAIN_FILES" \
   data.val_files="$VAL_FILES" \
   actor_rollout_ref.rollout.multi_turn.tool_config_path="$TOOL_CONFIG_PATH" \
+  actor_rollout_ref.rollout.temperature=0.0 \
+  actor_rollout_ref.rollout.multi_turn.support_temperature=0.0 \
+  actor_rollout_ref.rollout.multi_turn.query_temperature=0.0 \
+  actor_rollout_ref.rollout.multi_turn.val_support_temperature=0.0 \
+  actor_rollout_ref.rollout.multi_turn.val_query_temperature=0.0 \
+  actor_rollout_ref.rollout.val_kwargs.temperature=0.0 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
   trainer.n_gpus_per_node="$NGPU" \
   trainer.nnodes=1 \

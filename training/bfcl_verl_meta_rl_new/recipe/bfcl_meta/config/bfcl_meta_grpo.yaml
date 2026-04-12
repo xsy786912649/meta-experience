@@ -10,7 +10,7 @@ data:
   max_prompt_length: 18432
   max_response_length: 2048
   train_batch_size: 256
-  val_batch_size: 128
+  val_batch_size: 256
   truncation: error
   return_raw_chat: true
   filter_overlong_prompts: false
@@ -21,6 +21,7 @@ data:
 actor_rollout_ref:
   rollout:
     mode: async
+    temperature: 1.0
     prompt_length: 18432
     response_length: 2048
     max_model_len: 22528
@@ -33,7 +34,9 @@ actor_rollout_ref:
       summary_safety_margin: 1024
       disable_query_memo: false
       support_temperature: 1.0
-      query_temperature: 0.0
+      query_temperature: 1.0
+      val_support_temperature: 0.0
+      val_query_temperature: 0.0
       pipeline_mode: phased
       val_pipeline_mode: summary_only
       summary_phase_epochs: 3
@@ -41,6 +44,8 @@ actor_rollout_ref:
       tool_config_path: null
       completion_callback: recipe.bfcl_meta.meta_callback.BFCLMetaCompletionCallback
       format: hermes
+    val_kwargs:
+      temperature: 0.0
 
 reward_model:
   reward_manager: naive
