@@ -11,7 +11,6 @@ CONFIG_PATH="$REPO_ROOT/recipe/bfcl_meta/config"
 TOOL_CONFIG_PATH="$REPO_ROOT/recipe/bfcl_multiturn/config/tool_config/bfcl_tool_config.yaml"
 
 MODEL_PATH=${MODEL_PATH:?MODEL_PATH is required}
-CKPT_PATH=${CKPT_PATH:?CKPT_PATH is required}
 DATA_DIR=${DATA_DIR:-$REPO_ROOT/data/bfcl_meta_rl}
 NGPU=${NGPU:-4}
 DATASETS=${DATASETS:-"train seen unseen"}  # train | seen | unseen
@@ -76,7 +75,6 @@ run_eval_mode() {
     trainer.val_before_train=True \
     trainer.val_only=True \
     trainer.resume_mode=disable \
-    trainer.resume_from_path="$CKPT_PATH" \
     trainer.validation_data_dir="$dump_dir" \
     trainer.log_val_generations=0 \
     trainer.logger=['console'] "${EXTRA_ARGS[@]}"
