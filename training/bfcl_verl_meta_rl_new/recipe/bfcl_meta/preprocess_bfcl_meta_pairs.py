@@ -68,8 +68,6 @@ def _build_train_pairs(train_rows: list[dict]) -> list[dict]:
     for experience_key, rows in grouped.items():
         for support_row in rows:
             for query_row in rows:
-                if support_row["id"] == query_row["id"]:
-                    continue
                 pairs.append(_build_pair_row("train", support_row, query_row))
     return pairs
 
@@ -96,8 +94,6 @@ def _build_unseen_eval_pairs(test_unseen_rows: list[dict]) -> list[dict]:
     for experience_key, rows in grouped.items():
         for support_row in rows:
             for query_row in rows:
-                if support_row["id"] == query_row["id"]:
-                    continue
                 pairs.append(_build_pair_row("test_unseen", support_row, query_row))
     return pairs
 

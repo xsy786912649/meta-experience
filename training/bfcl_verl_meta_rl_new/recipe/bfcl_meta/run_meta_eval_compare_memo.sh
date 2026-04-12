@@ -64,6 +64,11 @@ run_eval_mode() {
     data.train_files="$TRAIN_FILES" \
     data.val_files="$val_files" \
     actor_rollout_ref.rollout.multi_turn.tool_config_path="$TOOL_CONFIG_PATH" \
+    actor_rollout_ref.model.use_remove_padding=True \
+    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.rollout.multi_turn.disable_query_memo="$disable_query_memo" \
     actor_rollout_ref.rollout.multi_turn.support_temperature=1.0 \
     actor_rollout_ref.rollout.multi_turn.query_temperature=1.0 \
