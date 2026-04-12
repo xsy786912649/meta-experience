@@ -7,6 +7,9 @@ def _normalize_reward(extra_info):
     if extra_info is None:
         return [-0.001]
 
+    if isinstance(extra_info, dict):
+        return _normalize_reward(extra_info.get("reward", [-0.001]))
+
     if isinstance(extra_info, np.ndarray):
         if extra_info.ndim == 0:
             return _normalize_reward(extra_info.item())
@@ -23,4 +26,10 @@ def _normalize_reward(extra_info):
 
 def compute_score(data_source, solution_str, ground_truth, extra_info):
     reward = _normalize_reward(extra_info)
-    return {"score": reward, "pred": ""}
+    result = {"score": reward, "pred": ""}
+    if isinstance(extra_info, dict):
+        for key, value in extra_info.items():
+            if key == "reward":
+                continue
+            result[key] = value
+    return result

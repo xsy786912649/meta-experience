@@ -38,6 +38,14 @@ from verl.tools.utils.tool_registry import initialize_tools_from_config
 from verl.utils import hf_tokenizer
 from verl.utils.fs import copy_to_local
 from verl.utils.import_utils import deprecated
+
+
+def _extract_reward_scalar(reward):
+    if isinstance(reward, dict):
+        reward = reward.get("reward")
+    if isinstance(reward, (list, tuple)) and len(reward) > 0:
+        return float(reward[-1])
+    return None
 logger = logging.getLogger(__file__)
 
 
@@ -554,12 +562,10 @@ class ChatCompletionScheduler:
 
         # Print batch-level reward ratio (final-step reward > 0 means success).
         try:
-            success_cnt = sum(1 for r in batch_reward if isinstance(r, (list, tuple)) and len(r) > 0 and float(r[-1]) > 0.0)
+            success_cnt = sum(1 for r in batch_reward if (_extract_reward_scalar(r) or 0.0) > 0.0)
             total_cnt = len(batch_reward)
             success_ratio = (success_cnt / total_cnt) if total_cnt > 0 else 0.0
-            reward_values = [
-                float(r[-1]) for r in batch_reward if isinstance(r, (list, tuple)) and len(r) > 0
-            ]
+            reward_values = [value for r in batch_reward if (value := _extract_reward_scalar(r)) is not None]
             reward_mean = (sum(reward_values) / len(reward_values)) if reward_values else 0.0
             logger.info(
                 "trajectory_reward_ratio success=%s total=%s ratio=%.4f reward_mean=%.4f",

@@ -32,6 +32,8 @@ actor_rollout_ref:
       support_max_model_len: 16384
       summary_safety_margin: 1024
       disable_query_memo: false
+      support_temperature: 1.0
+      query_temperature: 0.0
       pipeline_mode: phased
       val_pipeline_mode: summary_only
       summary_phase_epochs: 3

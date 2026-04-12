@@ -17,9 +17,6 @@ from verl.workers.rollout.chat_scheduler import ChatCompletionScheduler, ToolCom
 from recipe.bfcl_meta.meta_env import build_summary_prompt_messages
 from recipe.bfcl_meta.meta_rollout import MetaRolloutEngine, parse_summary_generation
 
-SUPPORT_TEMPERATURE = 1.0
-QUERY_TEMPERATURE = 0.0
-
 PIPELINE_SUMMARY = "summary_only"
 PIPELINE_SUPPORT = "support_only"
 PIPELINE_PHASED = "phased"
@@ -30,6 +27,25 @@ def _has_explicit_action_output(text: str) -> bool:
         return False
     final_text = text.split("</think>")[-1] if "</think>" in text else text
     return bool(re.search(r"<tool_call>\s*.*?\s*</tool_call>", final_text, re.DOTALL))
+
+
+def _build_reward_payload(
+    reward: float,
+    *,
+    query_success: bool,
+    query_ran: bool,
+    explicit_action_output: bool,
+    used_memo: bool,
+    summary_context_text: str,
+) -> dict[str, Any]:
+    return {
+        "reward": [float(reward)],
+        "query_success": bool(query_success),
+        "query_ran": bool(query_ran),
+        "explicit_action_output": bool(explicit_action_output),
+        "used_memo": bool(used_memo),
+        "summary_context_nonempty": bool((summary_context_text or "").strip()),
+    }
 
 
 def _keep_last_token(mask: torch.Tensor) -> torch.Tensor:
@@ -76,6 +92,12 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         )
         self.disable_query_memo = bool(
             config.actor_rollout_ref.rollout.multi_turn.get("disable_query_memo", False)
+        )
+        self.support_temperature = float(
+            config.actor_rollout_ref.rollout.multi_turn.get("support_temperature", 1.0)
+        )
+        self.query_temperature = float(
+            config.actor_rollout_ref.rollout.multi_turn.get("query_temperature", 0.0)
         )
         self._prepared_samples: dict[str, dict[str, Any]] = {}
         self._prepared_requests: dict[str, list[dict[str, Any]]] = {}
@@ -150,7 +172,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
     async def _prepare_summary_payload(self, payload: dict[str, Any], repeat_count: int) -> dict[str, Any]:
         support_result = await self.rollout_engine.run_task_rollout(
             payload=payload["support"],
-            temperature=SUPPORT_TEMPERATURE,
+            temperature=self.support_temperature,
             experience_summary=None,
             max_model_len=self.support_max_model_len,
             exploration_mode=True,
@@ -184,7 +206,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             *(
                 self.rollout_engine.run_task_rollout(
                     payload=payload["support"],
-                    temperature=SUPPORT_TEMPERATURE,
+                    temperature=self.support_temperature,
                     experience_summary=None,
                     max_model_len=self.support_max_model_len,
                     exploration_mode=True,
@@ -231,7 +253,18 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         if request_meta and request_meta.get("pipeline_mode") == PIPELINE_SUPPORT:
             messages[:] = copy.deepcopy(request_meta["support_conversation"])
         messages.append({"role": "assistant", "content": ""})
-        messages.append({"reward": [-0.001]})
+        messages.append(
+            {
+                "reward": _build_reward_payload(
+                    -0.001,
+                    query_success=False,
+                    query_ran=False,
+                    explicit_action_output=False,
+                    used_memo=False,
+                    summary_context_text="",
+                )
+            }
+        )
         if prepared is not None:
             prepared["remaining"] -= 1
             if prepared["remaining"] <= 0:
@@ -253,22 +286,33 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
 
         full_output, summary_context_text = parse_summary_generation(completions)
 
-        reward = -0.001
-        if _has_explicit_action_output(full_output):
+        explicit_action_output = _has_explicit_action_output(full_output)
+        used_memo = not self.disable_query_memo and bool(summary_context_text)
+        query_result = await self.rollout_engine.run_task_rollout(
+            payload=payload["query"],
+            temperature=self.query_temperature,
+            experience_summary=None if self.disable_query_memo else (summary_context_text or None),
+        )
+        reward = 1.0 if query_result["success"] else -0.001
+        if explicit_action_output:
             reward = -0.5
-        elif summary_context_text or self.disable_query_memo:
-            query_result = await self.rollout_engine.run_task_rollout(
-                payload=payload["query"],
-                temperature=QUERY_TEMPERATURE,
-                experience_summary=None if self.disable_query_memo else summary_context_text,
-            )
-            reward = 1.0 if query_result["success"] else -0.001
 
         if pipeline_mode == PIPELINE_SUPPORT and request_meta is not None:
             messages[:] = copy.deepcopy(request_meta["support_conversation"])
         else:
             messages.append({"role": "assistant", "content": full_output})
-        messages.append({"reward": [reward]})
+        messages.append(
+            {
+                "reward": _build_reward_payload(
+                    reward,
+                    query_success=bool(query_result["success"]),
+                    query_ran=True,
+                    explicit_action_output=explicit_action_output,
+                    used_memo=used_memo,
+                    summary_context_text=summary_context_text,
+                )
+            }
+        )
 
         prepared["remaining"] -= 1
         if prepared["remaining"] <= 0:
