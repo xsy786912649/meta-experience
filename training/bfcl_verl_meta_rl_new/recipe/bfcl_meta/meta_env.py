@@ -177,6 +177,7 @@ def build_summary_prompt_messages(
     checker: dict[str, Any],
     max_prompt_tokens: int,
 ) -> list[dict[str, str]]:
+    target_prompt_tokens = max(0, max_prompt_tokens - 8)
     checker_summary = summarize_checker_result(checker)
     support_outcome = "success" if support_success else "failure"
 
@@ -207,18 +208,18 @@ def build_summary_prompt_messages(
         )
 
     prompt_messages = _build_messages(trajectory_text, checker_summary)
-    if _full_prompt_tokens(prompt_messages) <= max_prompt_tokens:
+    if _full_prompt_tokens(prompt_messages) <= target_prompt_tokens:
         return prompt_messages
 
     state_free_trajectory = remove_state_info_blocks(trajectory_text)
     prompt_messages = _build_messages(state_free_trajectory, checker_summary)
-    if _full_prompt_tokens(prompt_messages) <= max_prompt_tokens:
+    if _full_prompt_tokens(prompt_messages) <= target_prompt_tokens:
         return prompt_messages
 
     empty_trajectory_messages = _build_messages("", checker_summary)
-    if _full_prompt_tokens(empty_trajectory_messages) > max_prompt_tokens:
+    if _full_prompt_tokens(empty_trajectory_messages) > target_prompt_tokens:
         checker_overhead_tokens = _full_prompt_tokens(_build_messages("", ""))
-        checker_budget = max(0, max_prompt_tokens - checker_overhead_tokens)
+        checker_budget = max(0, target_prompt_tokens - checker_overhead_tokens)
         checker_summary = truncate_text_by_tokens(
             tokenizer,
             checker_summary,
@@ -227,7 +228,7 @@ def build_summary_prompt_messages(
         )
 
     base_prompt_tokens = _full_prompt_tokens(_build_messages("", checker_summary))
-    trajectory_budget = max(0, max_prompt_tokens - base_prompt_tokens)
+    trajectory_budget = max(0, target_prompt_tokens - base_prompt_tokens)
     clipped_trajectory = truncate_prefix_by_tokens(tokenizer, state_free_trajectory, trajectory_budget)
     return _build_messages(clipped_trajectory, checker_summary)
 
