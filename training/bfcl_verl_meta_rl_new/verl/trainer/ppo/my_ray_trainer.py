@@ -637,6 +637,12 @@ class RayPPOTrainer:
         os.makedirs(dump_path, exist_ok=True)
         filename = os.path.join(dump_path, f"{self.global_steps}.jsonl")
 
+        if not (len(inputs) == len(outputs) == len(scores)):
+            raise ValueError(
+                f"Generation dump length mismatch: len(inputs)={len(inputs)}, "
+                f"len(outputs)={len(outputs)}, len(scores)={len(scores)}"
+            )
+
         n = len(inputs)
         base_data = {
             "input": inputs,
@@ -777,12 +783,9 @@ class RayPPOTrainer:
             
             batch_keys_to_pop = None
             non_tensor_batch_keys_to_pop = ["raw_prompt"]
-
-            sample_inputs.extend(
-                [test_batch.non_tensor_batch["raw_prompt"][i][0]["content"] for i in range(len(test_batch))]
-            )
-
-            print(sample_inputs[0])
+            batch_sample_inputs = [
+                test_batch.non_tensor_batch["raw_prompt"][i][0]["content"] for i in range(len(test_batch))
+            ]
 
             if "tools_kwargs" in test_batch.non_tensor_batch:
                 non_tensor_batch_keys_to_pop.append("tools_kwargs")
@@ -840,7 +843,12 @@ class RayPPOTrainer:
                         f"input batch size {len(test_batch.batch)}"
                     )
                 repeat_times = len(test_output_gen_batch.batch) // len(test_batch.batch)
+                batch_sample_inputs = [
+                    prompt for prompt in batch_sample_inputs for _ in range(repeat_times)
+                ]
                 test_batch = test_batch.repeat(repeat_times=repeat_times, interleave=True)
+
+            sample_inputs.extend(batch_sample_inputs)
 
             test_batch = test_batch.union(test_output_gen_batch)
             test_batch.meta_info["validate"] = True
@@ -886,6 +894,16 @@ class RayPPOTrainer:
             assert len(lst) == 0 or len(lst) == len(sample_scores), f"{key_info}: {len(lst)=}, {len(sample_scores)=}"
 
         data_sources = np.concatenate(data_source_lst, axis=0)
+        if not (
+            len(sample_inputs) == len(sample_outputs) == len(sample_scores) == len(data_sources)
+        ):
+            raise ValueError(
+                "Validation sample length mismatch: "
+                f"len(sample_inputs)={len(sample_inputs)}, "
+                f"len(sample_outputs)={len(sample_outputs)}, "
+                f"len(sample_scores)={len(sample_scores)}, "
+                f"len(data_sources)={len(data_sources)}"
+            )
 
         data_src2var2metric2val = process_validation_metrics(data_sources, sample_inputs, reward_extra_infos_dict)
         metric_dict = {}
