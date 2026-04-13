@@ -833,6 +833,15 @@ class RayPPOTrainer:
             output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in output_ids]
             sample_outputs.extend(output_texts)
 
+            if len(test_output_gen_batch.batch) != len(test_batch.batch):
+                if len(test_output_gen_batch.batch) % len(test_batch.batch) != 0:
+                    raise ValueError(
+                        f"Validation generated batch size {len(test_output_gen_batch.batch)} is not divisible by "
+                        f"input batch size {len(test_batch.batch)}"
+                    )
+                repeat_times = len(test_output_gen_batch.batch) // len(test_batch.batch)
+                test_batch = test_batch.repeat(repeat_times=repeat_times, interleave=True)
+
             test_batch = test_batch.union(test_output_gen_batch)
             test_batch.meta_info["validate"] = True
 
