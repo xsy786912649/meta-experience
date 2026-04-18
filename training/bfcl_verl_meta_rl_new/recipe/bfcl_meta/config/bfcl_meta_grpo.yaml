@@ -53,3 +53,7 @@ reward_model:
 custom_reward_function:
   path: pkg://recipe/bfcl_meta/meta_reward
   name: compute_score
+
+trainer:
+  save_best_val_checkpoint_only: false
+  best_checkpoint_metric: null

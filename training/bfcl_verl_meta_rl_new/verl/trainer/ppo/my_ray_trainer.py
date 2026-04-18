@@ -20,6 +20,7 @@ This trainer supports model-agonistic model initialization with huggingface
 
 import json
 import os
+import shutil
 import uuid
 from collections import defaultdict
 from copy import deepcopy
@@ -355,6 +356,9 @@ class RayPPOTrainer:
         self.ray_worker_group_cls = ray_worker_group_cls
         self.device_name = device_name
         self.validation_generations_logger = ValidationGenerationsLogger()
+        self._best_val_metric_name = None
+        self._best_val_metric_value = None
+        self._best_val_checkpoint_dir = None
 
         # if ref_in_actor is True, the reference policy will be actor without lora applied
         self.ref_in_actor = config.actor_rollout_ref.model.get("lora_rank", 0) > 0
@@ -383,6 +387,122 @@ class RayPPOTrainer:
 
         self._validate_config()
         self._create_dataloader(train_dataset, val_dataset, collate_fn, train_sampler)
+        self._load_best_val_checkpoint_state()
+
+    def _best_val_checkpoint_state_path(self):
+        return os.path.join(self.config.trainer.default_local_dir, "best_val_checkpoint.json")
+
+    def _load_best_val_checkpoint_state(self):
+        state_path = self._best_val_checkpoint_state_path()
+        if not os.path.exists(state_path):
+            return
+
+        try:
+            with open(state_path, "r") as f:
+                state = json.load(f)
+        except Exception as e:
+            print(f"Warning: failed to load best checkpoint state from {state_path}: {e}")
+            return
+
+        checkpoint_dir = state.get("checkpoint_dir")
+        if checkpoint_dir and not os.path.exists(checkpoint_dir):
+            print(
+                f"Warning: recorded best checkpoint dir does not exist anymore: {checkpoint_dir}. "
+                "Resetting best-checkpoint state."
+            )
+            return
+
+        self._best_val_metric_name = state.get("metric_name")
+        metric_value = state.get("metric_value")
+        self._best_val_metric_value = float(metric_value) if metric_value is not None else None
+        self._best_val_checkpoint_dir = checkpoint_dir
+
+    def _save_best_val_checkpoint_state(self):
+        os.makedirs(self.config.trainer.default_local_dir, exist_ok=True)
+        state_path = self._best_val_checkpoint_state_path()
+        state = {
+            "metric_name": self._best_val_metric_name,
+            "metric_value": self._best_val_metric_value,
+            "checkpoint_dir": self._best_val_checkpoint_dir,
+            "global_step": self.global_steps,
+        }
+        with open(state_path, "w") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+
+    def _select_best_checkpoint_metric(self, val_metrics: dict):
+        requested_metric = self.config.trainer.get("best_checkpoint_metric", None)
+        if requested_metric:
+            if requested_metric not in val_metrics:
+                raise ValueError(
+                    f"Configured best checkpoint metric '{requested_metric}' not found in validation metrics. "
+                    f"Available metrics: {sorted(val_metrics.keys())}"
+                )
+            return requested_metric, float(val_metrics[requested_metric])
+
+        candidates = []
+        for metric_name, metric_value in val_metrics.items():
+            if not metric_name.startswith("val-core/"):
+                continue
+            if not isinstance(metric_value, (int, float, np.integer, np.floating)):
+                continue
+            candidates.append(metric_name)
+
+        if not candidates:
+            return None, None
+
+        def _metric_priority(metric_name: str):
+            if "/reward/mean@" in metric_name:
+                return (0, metric_name)
+            if "/acc/mean@" in metric_name:
+                return (1, metric_name)
+            if "/mean@" in metric_name:
+                return (2, metric_name)
+            return (3, metric_name)
+
+        selected_metric = min(candidates, key=_metric_priority)
+        return selected_metric, float(val_metrics[selected_metric])
+
+    def _maybe_save_best_val_checkpoint(self, val_metrics: dict):
+        if not self.config.trainer.get("save_best_val_checkpoint_only", False):
+            return
+
+        metric_name, metric_value = self._select_best_checkpoint_metric(val_metrics)
+        if metric_name is None:
+            print("Warning: no val-core metric found, skipping best-checkpoint save.")
+            return
+        if not np.isfinite(metric_value):
+            print(
+                f"Warning: best checkpoint metric {metric_name} is not finite ({metric_value}), "
+                "skipping checkpoint save."
+            )
+            return
+
+        is_better = self._best_val_metric_value is None or metric_value > self._best_val_metric_value
+        if not is_better:
+            print(
+                f"Skip checkpoint save at step {self.global_steps}: "
+                f"{metric_name}={metric_value:.6f} <= best {self._best_val_metric_name}={self._best_val_metric_value:.6f}"
+            )
+            return
+
+        previous_best_dir = self._best_val_checkpoint_dir
+        self._save_checkpoint()
+
+        self._best_val_metric_name = metric_name
+        self._best_val_metric_value = metric_value
+        self._best_val_checkpoint_dir = os.path.join(
+            self.config.trainer.default_local_dir, f"global_step_{self.global_steps}"
+        )
+        self._save_best_val_checkpoint_state()
+
+        if previous_best_dir and previous_best_dir != self._best_val_checkpoint_dir and os.path.exists(previous_best_dir):
+            print(f"Removing previous best checkpoint: {previous_best_dir}")
+            shutil.rmtree(previous_best_dir, ignore_errors=True)
+
+        print(
+            f"Saved new best checkpoint at step {self.global_steps}: "
+            f"{metric_name}={metric_value:.6f}"
+        )
 
     def _validate_config(self):
         config = self.config
@@ -1203,6 +1323,7 @@ class RayPPOTrainer:
             assert val_metrics, f"{val_metrics=}"
             pprint(f"Initial validation metrics: {val_metrics}")
             logger.log(data=val_metrics, step=self.global_steps)
+            self._maybe_save_best_val_checkpoint(val_metrics)
             if self.config.trainer.get("val_only", False):
                 return
 
@@ -1508,6 +1629,7 @@ class RayPPOTrainer:
                     ):
                         with marked_timer("testing", timing_raw, color="green"):
                             val_metrics: dict = self._validate()
+                            self._maybe_save_best_val_checkpoint(val_metrics)
                             if is_last_step:
                                 last_val_metrics = val_metrics
                         metrics.update(val_metrics)
@@ -1526,10 +1648,14 @@ class RayPPOTrainer:
                     # 2. It's the last training step.
                     # 3. The current step number is a multiple of the save frequency.
                     # 4. The ESI(Elastic Server Instance)/training plan is close to expiration.
-                    if self.config.trainer.save_freq > 0 and (
+                    if (
+                        not self.config.trainer.get("save_best_val_checkpoint_only", False)
+                        and self.config.trainer.save_freq > 0
+                        and (
                         is_last_step
                         or self.global_steps % self.config.trainer.save_freq == 0
                         or esi_close_to_expiration
+                        )
                     ):
                         if esi_close_to_expiration:
                             print("Force saving checkpoint: ESI instance expiration approaching.")
