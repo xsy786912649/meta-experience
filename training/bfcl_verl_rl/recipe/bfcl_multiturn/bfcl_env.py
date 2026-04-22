@@ -294,7 +294,7 @@ def build_system_prompt_with_tools(tools: list[dict]) -> str:
 def build_reward_vector(num_assistant_turns: int, success: bool) -> list[float]:
     if num_assistant_turns <= 0:
         return [0.0]
-    rewards = [0.0] * num_assistant_turns
+    rewards = [0.0] 
     rewards[-1] = 1.0 if success else 0.0
     return rewards
 

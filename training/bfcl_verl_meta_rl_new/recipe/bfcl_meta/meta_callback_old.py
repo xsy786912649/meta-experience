@@ -43,9 +43,6 @@ def _build_reward_payload(
         "reward": [float(reward)],
         "query_success": bool(query_success),
         "query_ran": bool(query_ran),
-        "query_success_count": 1 if query_success else 0,
-        "query_ran_count": 1 if query_ran else 0,
-        "query_total": 1,
         "explicit_action_output": bool(explicit_action_output),
         "used_memo": bool(used_memo),
         "summary_context_nonempty": bool((summary_context_text or "").strip()),
@@ -103,14 +100,12 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         self.query_temperature = float(
             config.actor_rollout_ref.rollout.multi_turn.get("query_temperature", 1.0)
         )
-        self.summary_temperature = float(config.actor_rollout_ref.rollout.get("temperature", 1.0))
         self.val_support_temperature = float(
             config.actor_rollout_ref.rollout.multi_turn.get("val_support_temperature", 0.0)
         )
         self.val_query_temperature = float(
             config.actor_rollout_ref.rollout.multi_turn.get("val_query_temperature", 0.0)
         )
-        self.val_summary_temperature = float(config.actor_rollout_ref.rollout.val_kwargs.get("temperature", 0.0))
         self._prepared_samples: dict[str, dict[str, Any]] = {}
         self._prepared_requests: dict[str, list[dict[str, Any]]] = {}
         self._query_training_examples: dict[str, list[dict[str, Any]]] = {}
@@ -217,13 +212,6 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         conversation.append({"role": "assistant", "content": "\n"})
         return conversation
 
-    @staticmethod
-    def _get_support_payloads(payload: dict[str, Any]) -> list[dict[str, Any]]:
-        supports = payload.get("supports")
-        if isinstance(supports, list) and supports:
-            return supports
-        return [payload["support"]]
-
     def _build_minimal_query_conversation(
         self,
         query_payload: dict[str, Any],
@@ -237,13 +225,6 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         conversation = [{"role": "system", "content": system_prompt}]
         conversation.append({"role": "assistant", "content": "\n"})
         return conversation
-
-    @staticmethod
-    def _get_query_payloads(payload: dict[str, Any]) -> list[dict[str, Any]]:
-        queries = payload.get("queries")
-        if isinstance(queries, list) and queries:
-            return queries
-        return [payload["query"]]
 
     def _build_support_exception_result(self, support_payload: dict[str, Any], error_message: str) -> dict[str, Any]:
         conversation = self._build_minimal_support_conversation(support_payload)
@@ -334,36 +315,11 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         except Exception as exc:
             return self._build_query_exception_result(query_payload, experience_summary, str(exc))
 
-    async def _run_query_rollouts_aggregate(
-        self,
-        query_payloads: list[dict[str, Any]],
-        experience_summary: str | None,
-        temperature: float,
-    ) -> dict[str, Any]:
-        query_results = [
-            await self._run_query_rollout_safe(query_payload, experience_summary, temperature)
-            for query_payload in query_payloads
-        ]
-        query_success_count = sum(bool(result["success"]) for result in query_results)
-        query_ran_count = len(query_results)
-        query_total = len(query_results)
-        query_success_rate = (query_success_count / query_total) if query_total else 0.0
-        return {
-            "results": query_results,
-            "query_success_count": query_success_count,
-            "query_ran_count": query_ran_count,
-            "query_total": query_total,
-            "query_success_rate": query_success_rate,
-        }
-
     def _select_support_temperature(self, validate: bool) -> float:
         return self.val_support_temperature if validate else self.support_temperature
 
     def _select_query_temperature(self, validate: bool) -> float:
         return self.val_query_temperature if validate else self.query_temperature
-
-    def _select_summary_temperature(self, validate: bool) -> float:
-        return self.val_summary_temperature if validate else self.summary_temperature
 
     def _select_batch_mode(self, validate: bool) -> str:
         requested = self.val_pipeline_mode if validate else self.train_pipeline_mode
@@ -428,9 +384,8 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         return prepared
 
     async def _prepare_summary_payload(self, payload: dict[str, Any], repeat_count: int, validate: bool) -> dict[str, Any]:
-        support_payloads = self._get_support_payloads(payload)
         support_result = await self._run_support_rollout_safe_with_temperature(
-            support_payloads[0],
+            payload["support"],
             self._select_support_temperature(validate),
         )
         summary_messages = build_summary_prompt_messages(
@@ -449,8 +404,6 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
                     "pipeline_mode": PIPELINE_SUMMARY,
                     "meta_instance_id": payload["meta_instance_id"],
                     "validate": validate,
-                    "multi_support_eval": bool(validate and len(support_payloads) > 1),
-                    "extra_support_payloads": copy.deepcopy(support_payloads[1:]),
                 },
             )
             conversations.append(prepared_conversation)
@@ -514,26 +467,6 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         except Exception as exc:
             return self._build_support_exception_result(support_payload, str(exc))
 
-    async def _run_summary_generation_safe(
-        self,
-        summary_messages: list[dict[str, str]],
-        temperature: float,
-    ) -> tuple[str, bool]:
-        try:
-            completion = await self._chat_once(summary_messages, temperature)
-            full_output, _ = parse_summary_generation(completion)
-            return full_output or "empty", True
-        except Exception:
-            return "empty", False
-
-    @staticmethod
-    def _combine_summary_outputs(summary_outputs: list[str]) -> str:
-        cleaned = [(text or "").strip() for text in summary_outputs]
-        return "\n\n".join(
-            f"Memo {idx + 1}:\n{text if text else 'empty'}"
-            for idx, text in enumerate(cleaned)
-        )
-
     async def handle_request_error(
         self,
         messages: list[dict[str, str]],
@@ -560,55 +493,39 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             query_summary_text = "empty"
         used_memo = query_summary_text is not None
         validate = bool(request_meta.get("validate", False)) if request_meta else False
-        query_aggregate = await self._run_query_rollouts_aggregate(
-            self._get_query_payloads(payload),
+        query_result = await self._run_query_rollout_safe(
+            payload["query"],
             query_summary_text,
             self._select_query_temperature(validate),
         )
-        query_success_count = query_aggregate["query_success_count"]
-        query_ran_count = query_aggregate["query_ran_count"]
-        query_total = query_aggregate["query_total"]
-        query_success_rate = query_aggregate["query_success_rate"]
-        query_success = query_success_count == query_total and query_total > 0
-        query_ran = query_ran_count > 0
+        query_success = bool(query_result["success"])
+        query_ran = True
         query_reward_payload = _build_reward_payload(
-            query_success_rate if query_total > 0 else -0.001,
+            1.0 if query_success else -0.001,
             query_success=query_success,
             query_ran=query_ran,
             explicit_action_output=False,
             used_memo=used_memo,
             summary_context_text=query_summary_text or "",
         )
-        query_reward_payload["query_success_count"] = query_success_count
-        query_reward_payload["query_ran_count"] = query_ran_count
-        query_reward_payload["query_total"] = query_total
-        query_reward_payload["query_success_rate"] = query_success_rate
         if request_meta and request_meta.get("pipeline_mode") == PIPELINE_SUMMARY:
-            query_payloads = self._get_query_payloads(payload)
-            if len(query_payloads) == 1:
-                self._store_query_training_example(
-                    payload["meta_instance_id"],
-                    messages,
-                    query_aggregate["results"][0]["conversation"],
-                    query_reward_payload,
-                )
+            self._store_query_training_example(
+                payload["meta_instance_id"],
+                messages,
+                query_result["conversation"],
+                query_reward_payload,
+            )
         messages.append({"role": "assistant", "content": "\n"})
         messages.append(
             {
-                "reward": {
-                    **_build_reward_payload(
-                    query_success_rate if query_total > 0 else -0.001,
+                "reward": _build_reward_payload(
+                    1.0 if query_success else -0.001,
                     query_success=query_success,
                     query_ran=query_ran,
                     explicit_action_output=False,
                     used_memo=used_memo,
                     summary_context_text=query_summary_text or "",
-                    ),
-                    "query_success_count": query_success_count,
-                    "query_ran_count": query_ran_count,
-                    "query_total": query_total,
-                    "query_success_rate": query_success_rate,
-                }
+                )
             }
         )
         if prepared is not None:
@@ -629,55 +546,23 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         prepared = self._prepared_samples[payload["meta_instance_id"]]
         request_meta = await self._consume_prepared_request(messages)
         pipeline_mode = request_meta["pipeline_mode"] if request_meta else PIPELINE_SUMMARY
-        validate = bool(request_meta.get("validate", False)) if request_meta else False
 
         full_output, summary_context_text = parse_summary_generation(completions)
-        summary_outputs = [full_output or "empty"]
 
-        if request_meta and request_meta.get("multi_support_eval"):
-            extra_support_payloads = request_meta.get("extra_support_payloads", [])
-            support_temperature = self._select_support_temperature(validate)
-            summary_temperature = self._select_summary_temperature(validate)
-            for extra_support_payload in extra_support_payloads:
-                extra_support_result = await self._run_support_rollout_safe_with_temperature(
-                    extra_support_payload,
-                    support_temperature,
-                )
-                extra_summary_messages = build_summary_prompt_messages(
-                    tokenizer=self.tokenizer,
-                    trajectory_text=extra_support_result["trajectory_text"],
-                    support_success=extra_support_result["success"],
-                    checker=extra_support_result["checker"],
-                    max_prompt_tokens=self.summary_prompt_budget,
-                )
-                extra_full_output, _ = await self._run_summary_generation_safe(
-                    extra_summary_messages,
-                    summary_temperature,
-                )
-                summary_outputs.append(extra_full_output)
-
-        combined_summary_text = (
-            self._combine_summary_outputs(summary_outputs)
-            if request_meta and request_meta.get("multi_support_eval")
-            else (full_output or "empty")
-        )
-        explicit_action_output = any(_has_explicit_action_output(text) for text in summary_outputs)
+        explicit_action_output = _has_explicit_action_output(full_output)
         if self.disable_query_memo:
             query_summary_text = None
         else:
-            query_summary_text = combined_summary_text if combined_summary_text else "empty"
+            query_summary_text = full_output if full_output else "empty"
         used_memo = query_summary_text is not None
-        query_aggregate = await self._run_query_rollouts_aggregate(
-            self._get_query_payloads(payload),
+        validate = bool(request_meta.get("validate", False)) if request_meta else False
+        query_result = await self._run_query_rollout_safe(
+            payload["query"],
             query_summary_text,
             self._select_query_temperature(validate),
         )
-        query_success_count = query_aggregate["query_success_count"]
-        query_ran_count = query_aggregate["query_ran_count"]
-        query_total = query_aggregate["query_total"]
-        query_success_rate = query_aggregate["query_success_rate"]
-        query_success = query_success_count == query_total and query_total > 0
-        query_reward = query_success_rate if query_total > 0 else -0.001
+        query_success = bool(query_result["success"])
+        query_reward = 1.0 if query_success else -0.001
         reward = query_reward
         if explicit_action_output:
             reward = -0.5
@@ -689,40 +574,28 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             used_memo=used_memo,
             summary_context_text=query_summary_text or "",
         )
-        query_reward_payload["query_success_count"] = query_success_count
-        query_reward_payload["query_ran_count"] = query_ran_count
-        query_reward_payload["query_total"] = query_total
-        query_reward_payload["query_success_rate"] = query_success_rate
         if pipeline_mode == PIPELINE_SUMMARY:
-            query_payloads = self._get_query_payloads(payload)
-            if len(query_payloads) == 1:
-                self._store_query_training_example(
-                    payload["meta_instance_id"],
-                    messages,
-                    query_aggregate["results"][0]["conversation"],
-                    query_reward_payload,
-                )
+            self._store_query_training_example(
+                payload["meta_instance_id"],
+                messages,
+                query_result["conversation"],
+                query_reward_payload,
+            )
 
         if pipeline_mode == PIPELINE_SUPPORT and request_meta is not None:
             messages[:] = copy.deepcopy(request_meta["support_conversation"])
         else:
-            messages.append({"role": "assistant", "content": combined_summary_text})
+            messages.append({"role": "assistant", "content": full_output})
         messages.append(
             {
-                "reward": {
-                    **_build_reward_payload(
-                        reward,
-                        query_success=query_success,
-                        query_ran=query_ran_count > 0,
-                        explicit_action_output=explicit_action_output,
-                        used_memo=used_memo,
-                        summary_context_text=query_summary_text or "",
-                    ),
-                    "query_success_count": query_success_count,
-                    "query_ran_count": query_ran_count,
-                    "query_total": query_total,
-                    "query_success_rate": query_success_rate,
-                }
+                "reward": _build_reward_payload(
+                    reward,
+                    query_success=query_success,
+                    query_ran=True,
+                    explicit_action_output=explicit_action_output,
+                    used_memo=used_memo,
+                    summary_context_text=query_summary_text or "",
+                )
             }
         )
 
