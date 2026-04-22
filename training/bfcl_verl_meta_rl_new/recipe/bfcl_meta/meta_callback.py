@@ -900,7 +900,11 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
                 query_example = self._consume_query_training_example(meta_instance_id, conversation[:-1])
                 if query_example is None:
                     fallback_summary = None if self.disable_query_memo else "empty"
-                    query_conversation = self._build_minimal_query_conversation(payload["query"], fallback_summary)
+                    fallback_query_payload = self._get_query_payloads(payload)[0]
+                    query_conversation = self._build_minimal_query_conversation(
+                        fallback_query_payload,
+                        fallback_summary,
+                    )
                     query_reward = _build_reward_payload(
                         -0.001,
                         query_success=False,
