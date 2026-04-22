@@ -913,6 +913,11 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
                         used_memo=fallback_summary is not None,
                         summary_context_text=fallback_summary or "",
                     )
+                    query_total = len(self._get_query_payloads(payload))
+                    query_reward["query_success_count"] = 0
+                    query_reward["query_ran_count"] = 0
+                    query_reward["query_total"] = query_total
+                    query_reward["query_success_rate"] = 0.0
                 else:
                     query_conversation = query_example["conversation"]
                     query_reward = query_example["reward"]
