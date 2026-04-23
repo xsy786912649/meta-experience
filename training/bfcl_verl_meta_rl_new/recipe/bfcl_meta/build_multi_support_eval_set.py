@@ -23,10 +23,6 @@ def _experience_key(row: dict) -> str:
     return row.get("experience_key") or payload.get("experience_key", "")
 
 
-def _env_experience_key(row: dict) -> tuple[str, str]:
-    return row["env_key"], _experience_key(row)
-
-
 def _support_dedup_key(row: dict) -> str:
     payload = _decode_payload(row)
     support_payload = payload["support"]
@@ -37,65 +33,64 @@ def _support_dedup_key(row: dict) -> str:
 
 
 def build_multi_support_rows(rows: list[dict], split_name: str, support_count: int, seed: int) -> list[dict]:
-    grouped = defaultdict(list)
+    support_pool_by_env = defaultdict(dict)
     for row in rows:
-        grouped[_env_experience_key(row)].append(row)
+        support_pool_by_env[row["env_key"]].setdefault(_support_dedup_key(row), row)
 
     rng = random.Random(seed)
     output_rows = []
-    num_groups_total = 0
-    num_groups_kept = 0
-    num_unique_supports_total = 0
-    for (env_key, experience_key), experience_rows in grouped.items():
-        num_groups_total += 1
-        deduped_rows_by_support = {}
-        for row in experience_rows:
-            deduped_rows_by_support.setdefault(_support_dedup_key(row), row)
-        unique_support_rows = list(deduped_rows_by_support.values())
-        num_unique_supports_total += len(unique_support_rows)
+    num_rows_total = 0
+    num_rows_kept = 0
+    num_rows_skipped_insufficient_supports = 0
+    num_unique_supports_total = sum(len(pool) for pool in support_pool_by_env.values())
+    for row in rows:
+        num_rows_total += 1
+        env_key = row["env_key"]
+        payload = _decode_payload(row)
+        original_support_key = _support_dedup_key(row)
+        support_pool_rows = list(support_pool_by_env[env_key].values())
+        extra_support_rows = [
+            support_row for support_row in support_pool_rows if _support_dedup_key(support_row) != original_support_key
+        ]
+        rng.shuffle(extra_support_rows)
+        selected_support_rows = [row] + extra_support_rows[: max(0, support_count - 1)]
+        if len(selected_support_rows) < support_count:
+            num_rows_skipped_insufficient_supports += 1
+            continue
 
-        shuffled_rows = unique_support_rows[:]
-        rng.shuffle(shuffled_rows)
-
-        for chunk_start in range(0, len(shuffled_rows), support_count):
-            chunk_rows = shuffled_rows[chunk_start : chunk_start + support_count]
-            if len(chunk_rows) < support_count:
-                continue
-
-            num_groups_kept += 1
-            supports = [_decode_payload(row)["support"] for row in chunk_rows]
-            support_id_suffix = ",".join(row["support_id"] for row in chunk_rows)
-            queries = [_decode_payload(row)["query"] for row in chunk_rows]
-            first_row = chunk_rows[0]
-            first_payload = _decode_payload(first_row)
-            pair_payload = {
-                "pair_split": split_name,
+        num_rows_kept += 1
+        supports = [_decode_payload(support_row)["support"] for support_row in selected_support_rows]
+        support_id_suffix = ",".join(support_row["support_id"] for support_row in selected_support_rows)
+        pair_payload = {
+            "pair_split": split_name,
+            "env_key": env_key,
+            "category": row.get("category") or payload.get("category"),
+            "experience_key": _experience_key(row),
+            "supports": supports,
+            "queries": [payload["query"]],
+        }
+        pair_id = f"{split_name}:{support_count}supports:{support_id_suffix}->{row['query_id']}"
+        output_rows.append(
+            {
+                "data_source": "bfcl_meta_summary",
+                "pair_id": pair_id,
                 "env_key": env_key,
-                "category": first_row.get("category") or first_payload.get("category"),
-                "experience_key": experience_key,
-                "supports": supports,
-                "queries": queries,
+                "category": row.get("category") or payload.get("category"),
+                "experience_key": _experience_key(row),
+                "support_id": support_id_suffix,
+                "query_id": row["query_id"],
+                "flag": pair_id,
+                "reward_model": None,
+                "tools_kwargs": "",
+                "messages": "",
+                "total_messages": json.dumps(pair_payload, ensure_ascii=False),
             }
-            pair_id = f"{split_name}:{support_count}supports:{support_id_suffix}"
-            output_rows.append(
-                {
-                    "data_source": "bfcl_meta_summary",
-                    "pair_id": pair_id,
-                    "env_key": env_key,
-                    "category": first_row.get("category") or first_payload.get("category"),
-                    "experience_key": experience_key,
-                    "support_id": support_id_suffix,
-                    "query_id": ",".join(row["query_id"] for row in chunk_rows),
-                    "flag": pair_id,
-                    "reward_model": None,
-                    "tools_kwargs": "",
-                    "messages": "",
-                    "total_messages": json.dumps(pair_payload, ensure_ascii=False),
-                }
-            )
+        )
     return output_rows, {
-        "num_groups_total": num_groups_total,
-        "num_groups_kept": num_groups_kept,
+        "num_rows_total": num_rows_total,
+        "num_rows_kept": num_rows_kept,
+        "num_rows_skipped_insufficient_supports": num_rows_skipped_insufficient_supports,
+        "num_envs": len(support_pool_by_env),
         "num_unique_supports_total": num_unique_supports_total,
     }
 
