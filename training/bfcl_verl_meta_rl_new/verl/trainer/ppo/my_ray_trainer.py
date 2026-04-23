@@ -949,8 +949,8 @@ class RayPPOTrainer:
             # unpad. Meta rollout postprocess can expand each input into multiple
             # training/eval rows, so padded inputs also expand and must be removed
             # with the same expansion factor.
-            padded_input_size = len(test_gen_batch_padded.batch)
-            padded_output_size = len(test_output_gen_batch_padded.batch)
+            padded_input_size = len(test_gen_batch_padded)
+            padded_output_size = len(test_output_gen_batch_padded)
             if padded_input_size > 0 and padded_output_size % padded_input_size == 0:
                 output_repeat_times = padded_output_size // padded_input_size
             else:
