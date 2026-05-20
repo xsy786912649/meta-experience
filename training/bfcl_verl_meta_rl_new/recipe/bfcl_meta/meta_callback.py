@@ -97,6 +97,9 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         self.disable_query_memo = bool(
             config.actor_rollout_ref.rollout.multi_turn.get("disable_query_memo", False)
         )
+        self.train_summary_assistant = bool(
+            config.actor_rollout_ref.rollout.multi_turn.get("train_summary_assistant", True)
+        )
         self.support_temperature = float(
             config.actor_rollout_ref.rollout.multi_turn.get("support_temperature", 1.0)
         )
@@ -892,10 +895,11 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
                 payload = total_messages if isinstance(total_messages, dict) else json.loads(total_messages)
                 meta_instance_id = payload["meta_instance_id"]
 
-                expanded_conversations.append(conversation)
-                expanded_rewards.append(reward)
-                expanded_modes.append(PIPELINE_SUMMARY)
-                expanded_uids.append(f"{meta_instance_id}::summary")
+                if self.train_summary_assistant:
+                    expanded_conversations.append(conversation)
+                    expanded_rewards.append(reward)
+                    expanded_modes.append(PIPELINE_SUMMARY)
+                    expanded_uids.append(f"{meta_instance_id}::summary")
 
                 query_example = self._consume_query_training_example(meta_instance_id, conversation[:-1])
                 if query_example is None:
