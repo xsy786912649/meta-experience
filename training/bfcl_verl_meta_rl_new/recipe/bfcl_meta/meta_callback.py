@@ -210,6 +210,17 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
             self._query_training_examples.pop(key, None)
         return example
 
+    @staticmethod
+    def _summary_prompt_messages_from_completed_conversation(
+        conversation: list[dict[str, str]],
+    ) -> list[dict[str, str]]:
+        messages = conversation
+        if messages and "reward" in messages[-1] and "role" not in messages[-1]:
+            messages = messages[:-1]
+        if messages and messages[-1].get("role") == "assistant":
+            messages = messages[:-1]
+        return messages
+
     def _build_minimal_support_conversation(self, support_payload: dict[str, Any]) -> list[dict[str, str]]:
         system_prompt = build_task_system_prompt(
             support_payload["function"],
@@ -687,7 +698,7 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
         query_reward_payload = _build_reward_payload(
             query_reward,
             query_success=query_success,
-            query_ran=True,
+            query_ran=query_ran_count > 0,
             explicit_action_output=False,
             used_memo=used_memo,
             summary_context_text=query_summary_text or "",
@@ -901,7 +912,8 @@ class BFCLMetaCompletionCallback(ToolCompletionCallback):
                     expanded_modes.append(PIPELINE_SUMMARY)
                     expanded_uids.append(f"{meta_instance_id}::summary")
 
-                query_example = self._consume_query_training_example(meta_instance_id, conversation[:-1])
+                summary_prompt_messages = self._summary_prompt_messages_from_completed_conversation(conversation)
+                query_example = self._consume_query_training_example(meta_instance_id, summary_prompt_messages)
                 if query_example is None:
                     fallback_summary = None if self.disable_query_memo else "empty"
                     fallback_query_payload = self._get_query_payloads(payload)[0]
