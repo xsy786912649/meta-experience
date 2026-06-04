@@ -27,6 +27,28 @@ MEMO_TEMPERATURE="${MEMO_TEMPERATURE:-0.0}"
 START_INDEX="${START_INDEX:-0}"
 END_INDEX="${END_INDEX:--1}"
 SHUFFLE="${SHUFFLE:-0}"
+AGENT_COMPLETION_KWARGS="${AGENT_COMPLETION_KWARGS:-}"
+SUMMARY_COMPLETION_KWARGS="${SUMMARY_COMPLETION_KWARGS:-}"
+
+if [ -z "$AGENT_COMPLETION_KWARGS" ] && { [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; }; then
+  AGENT_COMPLETION_KWARGS="$(python -c 'import json, os; d={}; 
+api_base=os.environ.get("AGENT_API_BASE"); api_key=os.environ.get("AGENT_API_KEY");
+if api_base: d["api_base"]=api_base
+if api_key: d["api_key"]=api_key
+print(json.dumps(d))')"
+fi
+
+if [ -z "$SUMMARY_COMPLETION_KWARGS" ]; then
+  if [ -n "${SUMMARY_API_BASE:-}" ] || [ -n "${SUMMARY_API_KEY:-}" ]; then
+    SUMMARY_COMPLETION_KWARGS="$(python -c 'import json, os; d={};
+api_base=os.environ.get("SUMMARY_API_BASE"); api_key=os.environ.get("SUMMARY_API_KEY");
+if api_base: d["api_base"]=api_base
+if api_key: d["api_key"]=api_key
+print(json.dumps(d))')"
+  else
+    SUMMARY_COMPLETION_KWARGS="$AGENT_COMPLETION_KWARGS"
+  fi
+fi
 
 cmd=(
   python run_env_adaptation.py
@@ -51,6 +73,8 @@ cmd=(
   --start-index "$START_INDEX"
   --end-index "$END_INDEX"
   --shuffle "$SHUFFLE"
+  --agent-completion-kwargs "${AGENT_COMPLETION_KWARGS:-{}}"
+  --summary-completion-kwargs "${SUMMARY_COMPLETION_KWARGS:-{}}"
   --adaptation-counts
 )
 

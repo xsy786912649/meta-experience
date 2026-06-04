@@ -21,9 +21,31 @@ MAX_CONCURRENCY="${MAX_CONCURRENCY:-1}"
 SEED="${SEED:-300}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 LOG_DIR="${LOG_DIR:-data/env_adaptation}"
+AGENT_LLM_ARGS_PROVIDED="${AGENT_LLM_ARGS+x}"
+SUMMARY_LLM_ARGS_PROVIDED="${SUMMARY_LLM_ARGS+x}"
 AGENT_LLM_ARGS="${AGENT_LLM_ARGS:-{\"temperature\":0}}"
 USER_LLM_ARGS="${USER_LLM_ARGS:-{\"temperature\":0}}"
 SUMMARY_LLM_ARGS="${SUMMARY_LLM_ARGS:-{\"temperature\":0}}"
+
+if [ -z "$AGENT_LLM_ARGS_PROVIDED" ] && { [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; }; then
+  AGENT_LLM_ARGS="$(python -c 'import json, os; d={"temperature":0};
+api_base=os.environ.get("AGENT_API_BASE"); api_key=os.environ.get("AGENT_API_KEY");
+if api_base: d["api_base"]=api_base
+if api_key: d["api_key"]=api_key
+print(json.dumps(d))')"
+fi
+
+if [ -z "$SUMMARY_LLM_ARGS_PROVIDED" ]; then
+  if [ -n "${SUMMARY_API_BASE:-}" ] || [ -n "${SUMMARY_API_KEY:-}" ]; then
+    SUMMARY_LLM_ARGS="$(python -c 'import json, os; d={"temperature":0};
+api_base=os.environ.get("SUMMARY_API_BASE"); api_key=os.environ.get("SUMMARY_API_KEY");
+if api_base: d["api_base"]=api_base
+if api_key: d["api_key"]=api_key
+print(json.dumps(d))')"
+  elif [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; then
+    SUMMARY_LLM_ARGS="$AGENT_LLM_ARGS"
+  fi
+fi
 
 cmd=(
   python run_env_adaptation.py

@@ -15,10 +15,102 @@ from litellm import completion, provider_list
 from tau_bench.envs import get_env
 from tau_bench.envs.user import UserStrategy
 from tau_bench.run import agent_factory
-from tau_bench.types import EnvRunResult, SolveResult
+from tau_bench.types import Action, EnvRunResult, RESPOND_ACTION_NAME, SolveResult
 
 
 MEMO_HEADER = "Environment experience memo"
+
+
+class AdaptedToolCallingAgent:
+    def __init__(
+        self,
+        tools_info: List[Dict[str, Any]],
+        wiki: str,
+        model: str,
+        provider: str,
+        temperature: float = 0.0,
+        completion_kwargs: Optional[Dict[str, Any]] = None,
+    ):
+        self.tools_info = tools_info
+        self.wiki = wiki
+        self.model = model
+        self.provider = provider
+        self.temperature = temperature
+        self.completion_kwargs = completion_kwargs or {}
+
+    def solve(self, env, task_index: Optional[int] = None, max_num_steps: int = 30) -> SolveResult:
+        total_cost = 0.0
+        env_reset_res = env.reset(task_index=task_index)
+        obs = env_reset_res.observation
+        info = env_reset_res.info.model_dump()
+        reward = 0.0
+        messages: List[Dict[str, Any]] = [
+            {"role": "system", "content": self.wiki},
+            {"role": "user", "content": obs},
+        ]
+        for _ in range(max_num_steps):
+            res = completion(
+                messages=messages,
+                model=self.model,
+                custom_llm_provider=self.provider,
+                tools=self.tools_info,
+                temperature=self.temperature,
+                **self.completion_kwargs,
+            )
+            next_message = res.choices[0].message.model_dump()
+            total_cost += res._hidden_params["response_cost"] or 0
+            action = message_to_action(next_message)
+            env_response = env.step(action)
+            reward = env_response.reward
+            info = {**info, **env_response.info.model_dump()}
+            if action.name != RESPOND_ACTION_NAME:
+                next_message["tool_calls"] = next_message["tool_calls"][:1]
+                messages.extend(
+                    [
+                        next_message,
+                        {
+                            "role": "tool",
+                            "tool_call_id": next_message["tool_calls"][0]["id"],
+                            "name": next_message["tool_calls"][0]["function"]["name"],
+                            "content": env_response.observation,
+                        },
+                    ]
+                )
+            else:
+                messages.extend([next_message, {"role": "user", "content": env_response.observation}])
+            if env_response.done:
+                break
+        return SolveResult(reward=reward, info=info, messages=messages, total_cost=total_cost)
+
+
+def message_to_action(message: Dict[str, Any]) -> Action:
+    if (
+        "tool_calls" in message
+        and message["tool_calls"] is not None
+        and len(message["tool_calls"]) > 0
+        and message["tool_calls"][0]["function"] is not None
+    ):
+        tool_call = message["tool_calls"][0]
+        return Action(
+            name=tool_call["function"]["name"],
+            kwargs=json.loads(tool_call["function"]["arguments"]),
+        )
+    return Action(name=RESPOND_ACTION_NAME, kwargs={"content": message["content"]})
+
+
+def build_agent(tools_info: List[Dict[str, Any]], wiki: str, args: argparse.Namespace):
+    if args.agent_completion_kwargs and args.agent_strategy != "tool-calling":
+        raise ValueError("--agent-completion-kwargs currently supports --agent-strategy tool-calling only")
+    if args.agent_strategy == "tool-calling":
+        return AdaptedToolCallingAgent(
+            tools_info=tools_info,
+            wiki=wiki,
+            model=args.model,
+            provider=args.model_provider,
+            temperature=args.temperature,
+            completion_kwargs=args.agent_completion_kwargs,
+        )
+    return agent_factory(tools_info, wiki, args)
 
 
 def format_trajectory(messages: List[Dict[str, Any]], reward: float, info: Dict[str, Any]) -> str:
@@ -50,6 +142,7 @@ def summarize_support_trajectories(
     model: str,
     provider: str,
     temperature: float,
+    completion_kwargs: Optional[Dict[str, Any]] = None,
 ) -> tuple[str, float]:
     support_text = "\n\n".join(
         [
@@ -81,6 +174,7 @@ def summarize_support_trajectories(
         model=model,
         custom_llm_provider=provider,
         temperature=temperature,
+        **(completion_kwargs or {}),
     )
     cost = res._hidden_params.get("response_cost") or 0.0
     return res.choices[0].message.content or "", cost
@@ -135,7 +229,7 @@ def run_one_query(args: argparse.Namespace, query_task_id: int, trial: int, adap
     memo_cost = 0.0
     try:
         if adaptation_count > 0:
-            support_agent = agent_factory(base_env.tools_info, base_env.wiki, args)
+            support_agent = build_agent(base_env.tools_info, base_env.wiki, args)
             for support_task_id in support_task_ids:
                 support_env = get_env(
                     args.env,
@@ -157,10 +251,11 @@ def run_one_query(args: argparse.Namespace, query_task_id: int, trial: int, adap
                 model=args.summary_model or args.model,
                 provider=args.summary_model_provider or args.model_provider,
                 temperature=args.memo_temperature,
+                completion_kwargs=args.summary_completion_kwargs,
             )
 
         query_wiki = add_memo_to_wiki(base_env.wiki, memo)
-        query_agent = agent_factory(base_env.tools_info, query_wiki, args)
+        query_agent = build_agent(base_env.tools_info, query_wiki, args)
         query_env = get_env(
             args.env,
             user_strategy=args.user_strategy,
@@ -313,7 +408,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shuffle", type=int, default=0)
     parser.add_argument("--user-strategy", type=str, default="llm", choices=[item.value for item in UserStrategy])
     parser.add_argument("--few-shot-displays-path", type=str)
-    return parser.parse_args()
+    parser.add_argument(
+        "--agent-completion-kwargs",
+        type=json.loads,
+        default={},
+        help='JSON kwargs passed only to agent model calls, e.g. {"api_base":"http://host:8000/v1","api_key":"token"}.',
+    )
+    parser.add_argument(
+        "--summary-completion-kwargs",
+        type=json.loads,
+        default=None,
+        help="JSON kwargs passed only to memo summary model calls. Defaults to --agent-completion-kwargs.",
+    )
+    args = parser.parse_args()
+    if args.summary_completion_kwargs is None:
+        args.summary_completion_kwargs = dict(args.agent_completion_kwargs)
+    return args
 
 
 if __name__ == "__main__":
