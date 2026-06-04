@@ -33,7 +33,7 @@ if [[ "$USER_LLM" == openrouter/* ]] && [ -z "${OPENROUTER_API_KEY:-}" ]; then
 fi
 
 if [ -z "$AGENT_LLM_ARGS_PROVIDED" ] && { [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; }; then
-  AGENT_LLM_ARGS="$(python -c 'import json, os; d={"temperature":0};
+  AGENT_LLM_ARGS="$(python3 -c 'import json, os; d={"temperature":0};
 api_base=os.environ.get("AGENT_API_BASE"); api_key=os.environ.get("AGENT_API_KEY");
 if api_base: d["api_base"]=api_base
 if api_key: d["api_key"]=api_key
@@ -42,7 +42,7 @@ fi
 
 if [ -z "$SUMMARY_LLM_ARGS_PROVIDED" ]; then
   if [ -n "${SUMMARY_API_BASE:-}" ] || [ -n "${SUMMARY_API_KEY:-}" ]; then
-    SUMMARY_LLM_ARGS="$(python -c 'import json, os; d={"temperature":0};
+    SUMMARY_LLM_ARGS="$(python3 -c 'import json, os; d={"temperature":0};
 api_base=os.environ.get("SUMMARY_API_BASE"); api_key=os.environ.get("SUMMARY_API_KEY");
 if api_base: d["api_base"]=api_base
 if api_key: d["api_key"]=api_key
@@ -53,7 +53,7 @@ print(json.dumps(d))')"
 fi
 
 cmd=(
-  python run_env_adaptation.py
+  python3 run_env_adaptation.py
   --domain "$DOMAIN"
   --agent "$AGENT"
   --agent-llm "$AGENT_LLM"

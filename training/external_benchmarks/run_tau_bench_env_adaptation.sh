@@ -36,7 +36,7 @@ if [ "$USER_MODEL_PROVIDER" = "openrouter" ] && [ -z "${OPENROUTER_API_KEY:-}" ]
 fi
 
 if [ -z "$AGENT_COMPLETION_KWARGS" ] && { [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; }; then
-  AGENT_COMPLETION_KWARGS="$(python -c 'import json, os; d={}; 
+  AGENT_COMPLETION_KWARGS="$(python3 -c 'import json, os; d={}; 
 api_base=os.environ.get("AGENT_API_BASE"); api_key=os.environ.get("AGENT_API_KEY");
 if api_base: d["api_base"]=api_base
 if api_key: d["api_key"]=api_key
@@ -45,7 +45,7 @@ fi
 
 if [ -z "$SUMMARY_COMPLETION_KWARGS" ]; then
   if [ -n "${SUMMARY_API_BASE:-}" ] || [ -n "${SUMMARY_API_KEY:-}" ]; then
-    SUMMARY_COMPLETION_KWARGS="$(python -c 'import json, os; d={};
+    SUMMARY_COMPLETION_KWARGS="$(python3 -c 'import json, os; d={};
 api_base=os.environ.get("SUMMARY_API_BASE"); api_key=os.environ.get("SUMMARY_API_KEY");
 if api_base: d["api_base"]=api_base
 if api_key: d["api_key"]=api_key
@@ -56,7 +56,7 @@ print(json.dumps(d))')"
 fi
 
 cmd=(
-  python run_env_adaptation.py
+  python3 run_env_adaptation.py
   --env "$ENV_NAME"
   --task-split "$TASK_SPLIT"
   --model "$MODEL"
