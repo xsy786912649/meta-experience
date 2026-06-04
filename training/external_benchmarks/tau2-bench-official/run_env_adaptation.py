@@ -26,6 +26,34 @@ from tau2.runner.simulation import run_simulation
 
 MEMO_HEADER = "Environment experience memo"
 
+SUPPORT_EXPLORATION_PREFIX = (
+    "This is an early attempt in a new tool-calling environment. "
+    "Try to solve the task, but also use careful exploration to learn tool behavior, constraints, and failure modes.\n\n"
+)
+
+QUERY_GUIDANCE_PREFIX = (
+    "You are given a tool-using guidance extracted from a previous task in the tool-calling environment. "
+    "Use it as heuristic guidance when it is relevant.\n\n"
+    "# Guidance:\n"
+)
+
+SUMMARY_SYSTEM_PROMPT = "You are extracting an tool-using guidance from your own support tool-calling trajectory."
+
+SUMMARY_USER_PROMPT_PREFIX = (
+    "First think and analyze the trajectory step-by-step and identify, (i) the exact final failure point(s), (ii) the root cause (not just symptoms), (iii) the hidden preconditions that were violated, (iv) the incorrect assumptions and problematic patterns by the agent. \n"
+    "Then, propose a guidance to avoid mistakes in future other tool-calling tasks. Keep your final guidance concise.\n\n"
+    "The guidance potentially include two part:\n"
+    "-1 guidance to avoid the identified mistakes, such as action-guiding rules, environment-specific constraints, and hidden preconditions\n"
+    "-2 high-level and generalized strategy that applies across tasks and tools\n\n"
+    "Do not:\n"
+    "- answer the user\n"
+    "- restate the whole trajectory\n"
+    "- output any tool call, function call, XML tool tag, or executable next step\n"
+    "- continue solving the task\n"
+    "- include one-off IDs, values, or details unless they imply a reusable rule\n"
+    "- add assistant-style closing language or filler\n\n"
+)
+
 
 def _message_to_dict(message: Any) -> dict:
     if hasattr(message, "model_dump"):
@@ -48,6 +76,31 @@ def format_simulation(simulation: SimulationRun) -> str:
     return "\n".join(lines)
 
 
+def extract_summary_context_text(summary_output: str) -> str:
+    text = (summary_output or "").strip()
+    if not text:
+        return ""
+    if "</think>" in text:
+        distilled = text.split("</think>")[-1].strip()
+        if distilled:
+            return distilled
+    return text
+
+
+def summarize_checker_result(simulation: SimulationRun) -> str:
+    reward = simulation.reward_info.reward if simulation.reward_info else None
+    if reward is not None and abs(float(reward) - 1.0) < 1e-6:
+        return "The support trajectory successfully completed the task."
+    parts = [
+        "The support trajectory failed or did not receive full reward.",
+        f"Reward: {reward}",
+        f"Termination: {simulation.termination_reason}",
+    ]
+    if simulation.reward_info:
+        parts.append(json.dumps(simulation.reward_info.model_dump(mode="json"), ensure_ascii=False, default=str)[:1200])
+    return "\n".join(parts)
+
+
 def summarize_support_simulations(
     support_simulations: list[SimulationRun],
     model: str,
@@ -59,32 +112,38 @@ def summarize_support_simulations(
             for simulation in support_simulations
         ]
     )
+    checker_text = "\n\n".join(
+        [
+            f"### Support task {simulation.task_id}\n{summarize_checker_result(simulation)}"
+            for simulation in support_simulations
+        ]
+    )
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "You extract reusable environment-specific guidance from completed tau-bench support trajectories. "
-                "Write a compact memo that helps the same agent solve later tasks in the same domain. "
-                "Focus on domain policy, tool semantics, user simulator behavior, state mutations, and common mistakes. "
-                "Do not invent facts beyond the trajectories."
-            ),
-        },
+        {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
         {
             "role": "user",
             "content": (
-                "Summarize these support trajectories into an environment experience memo.\n\n"
-                f"{support_text}"
+                SUMMARY_USER_PROMPT_PREFIX
+                + "Support trajectory:\n"
+                + support_text
+                + "\n\nSupport checker summary:\n"
+                + checker_text
+                + "\n\nNow write the guidance."
             ),
         },
     ]
     response = completion(messages=messages, model=model, **llm_args)
-    return response.choices[0].message.content or ""
+    return extract_summary_context_text(response.choices[0].message.content or "")
 
 
 def add_memo_to_policy(policy: str, memo: str) -> str:
     if not memo.strip():
         return policy
-    return f"{policy}\n\n## {MEMO_HEADER}\n{memo.strip()}\n"
+    return f"{policy}\n\n{QUERY_GUIDANCE_PREFIX}{memo.strip()}"
+
+
+def add_exploration_to_policy(policy: str) -> str:
+    return f"{policy}\n\n{SUPPORT_EXPLORATION_PREFIX.strip()}"
 
 
 def build_text_orchestrator_with_policy(
@@ -192,11 +251,12 @@ def run_one_query(
 
     try:
         for idx, support_task in enumerate(support_tasks):
+            support_env = build_environment(config.domain, env_kwargs=_build_env_kwargs(config, support_task))
             support_simulations.append(
                 run_task_with_policy(
                     config,
                     support_task,
-                    policy_override=None,
+                    policy_override=add_exploration_to_policy(support_env.get_policy()),
                     seed=seed_base + idx,
                 )
             )

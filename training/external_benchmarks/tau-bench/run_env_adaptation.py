@@ -20,6 +20,34 @@ from tau_bench.types import Action, EnvRunResult, RESPOND_ACTION_NAME, SolveResu
 
 MEMO_HEADER = "Environment experience memo"
 
+SUPPORT_EXPLORATION_PREFIX = (
+    "This is an early attempt in a new tool-calling environment. "
+    "Try to solve the task, but also use careful exploration to learn tool behavior, constraints, and failure modes.\n\n"
+)
+
+QUERY_GUIDANCE_PREFIX = (
+    "You are given a tool-using guidance extracted from a previous task in the tool-calling environment. "
+    "Use it as heuristic guidance when it is relevant.\n\n"
+    "# Guidance:\n"
+)
+
+SUMMARY_SYSTEM_PROMPT = "You are extracting an tool-using guidance from your own support tool-calling trajectory."
+
+SUMMARY_USER_PROMPT_PREFIX = (
+    "First think and analyze the trajectory step-by-step and identify, (i) the exact final failure point(s), (ii) the root cause (not just symptoms), (iii) the hidden preconditions that were violated, (iv) the incorrect assumptions and problematic patterns by the agent. \n"
+    "Then, propose a guidance to avoid mistakes in future other tool-calling tasks. Keep your final guidance concise.\n\n"
+    "The guidance potentially include two part:\n"
+    "-1 guidance to avoid the identified mistakes, such as action-guiding rules, environment-specific constraints, and hidden preconditions\n"
+    "-2 high-level and generalized strategy that applies across tasks and tools\n\n"
+    "Do not:\n"
+    "- answer the user\n"
+    "- restate the whole trajectory\n"
+    "- output any tool call, function call, XML tool tag, or executable next step\n"
+    "- continue solving the task\n"
+    "- include one-off IDs, values, or details unless they imply a reusable rule\n"
+    "- add assistant-style closing language or filler\n\n"
+)
+
 
 class AdaptedToolCallingAgent:
     def __init__(
@@ -137,6 +165,27 @@ def format_trajectory(messages: List[Dict[str, Any]], reward: float, info: Dict[
     return "\n".join(lines)
 
 
+def extract_summary_context_text(summary_output: str) -> str:
+    text = (summary_output or "").strip()
+    if not text:
+        return ""
+    if "</think>" in text:
+        distilled = text.split("</think>")[-1].strip()
+        if distilled:
+            return distilled
+    return text
+
+
+def summarize_checker_result(reward: float, info: Dict[str, Any]) -> str:
+    if (1 - 1e-6) <= reward <= (1 + 1e-6):
+        return "The support trajectory successfully completed the task."
+    return (
+        "The support trajectory failed or did not receive full reward.\n"
+        f"Reward: {reward}\n"
+        f"Info: {json.dumps(info, ensure_ascii=False, default=str)[:1200]}"
+    )
+
+
 def summarize_support_trajectories(
     support_results: List[Dict[str, Any]],
     model: str,
@@ -151,21 +200,24 @@ def summarize_support_trajectories(
             for item in support_results
         ]
     )
+    checker_text = "\n\n".join(
+        [
+            f"### Support task {item['task_id']}\n"
+            f"{summarize_checker_result(item['result'].reward, item['result'].info)}"
+            for item in support_results
+        ]
+    )
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "You extract reusable environment-specific guidance from completed tool-agent trajectories. "
-                "Write a compact memo that helps the same agent solve later tasks in the same benchmark environment. "
-                "Focus on policies, tool semantics, database constraints, common failure modes, and successful action patterns. "
-                "Do not mention task ids unless needed. Do not invent facts beyond the trajectories."
-            ),
-        },
+        {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
         {
             "role": "user",
             "content": (
-                "Summarize the following support trajectories into an environment experience memo.\n\n"
-                f"{support_text}"
+                SUMMARY_USER_PROMPT_PREFIX
+                + "Support trajectory:\n"
+                + support_text
+                + "\n\nSupport checker summary:\n"
+                + checker_text
+                + "\n\nNow write the guidance."
             ),
         },
     ]
@@ -177,13 +229,17 @@ def summarize_support_trajectories(
         **(completion_kwargs or {}),
     )
     cost = res._hidden_params.get("response_cost") or 0.0
-    return res.choices[0].message.content or "", cost
+    return extract_summary_context_text(res.choices[0].message.content or ""), cost
 
 
 def add_memo_to_wiki(wiki: str, memo: str) -> str:
     if not memo.strip():
         return wiki
-    return f"{wiki}\n\n## {MEMO_HEADER}\n{memo.strip()}\n"
+    return f"{wiki}\n\n{QUERY_GUIDANCE_PREFIX}{memo.strip()}"
+
+
+def add_exploration_to_wiki(wiki: str) -> str:
+    return f"{wiki}\n\n{SUPPORT_EXPLORATION_PREFIX.strip()}"
 
 
 def select_support_task_ids(
@@ -230,7 +286,8 @@ def run_one_query(args: argparse.Namespace, query_task_id: int, trial: int, adap
     memo_cost = 0.0
     try:
         if adaptation_count > 0:
-            support_agent = build_agent(base_env.tools_info, base_env.wiki, args)
+            support_wiki = add_exploration_to_wiki(base_env.wiki)
+            support_agent = build_agent(base_env.tools_info, support_wiki, args)
             for support_task_id in support_task_ids:
                 support_env = get_env(
                     args.env,
