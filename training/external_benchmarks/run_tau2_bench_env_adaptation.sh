@@ -7,7 +7,7 @@ cd "$BENCH_DIR"
 
 DOMAIN="${DOMAIN:-airline}"
 AGENT_LLM="${AGENT_LLM:?AGENT_LLM is required, e.g. AGENT_LLM=gpt-4.1}"
-USER_LLM="${USER_LLM:-gpt-4.1}"
+USER_LLM="${USER_LLM:-openrouter/deepseek/deepseek-v4-flash}"
 SUMMARY_LLM="${SUMMARY_LLM:-$AGENT_LLM}"
 AGENT="${AGENT:-llm_agent}"
 USER="${USER:-user_simulator}"
@@ -26,6 +26,11 @@ SUMMARY_LLM_ARGS_PROVIDED="${SUMMARY_LLM_ARGS+x}"
 AGENT_LLM_ARGS="${AGENT_LLM_ARGS:-{\"temperature\":0}}"
 USER_LLM_ARGS="${USER_LLM_ARGS:-{\"temperature\":0}}"
 SUMMARY_LLM_ARGS="${SUMMARY_LLM_ARGS:-{\"temperature\":0}}"
+
+if [[ "$USER_LLM" == openrouter/* ]] && [ -z "${OPENROUTER_API_KEY:-}" ]; then
+  echo "OPENROUTER_API_KEY is required when USER_LLM uses OpenRouter" >&2
+  exit 1
+fi
 
 if [ -z "$AGENT_LLM_ARGS_PROVIDED" ] && { [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; }; then
   AGENT_LLM_ARGS="$(python -c 'import json, os; d={"temperature":0};

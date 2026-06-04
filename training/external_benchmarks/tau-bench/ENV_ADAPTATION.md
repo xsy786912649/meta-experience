@@ -11,14 +11,14 @@ The memo is appended to the query agent's system/wiki prompt. Original `run.py` 
 Example:
 
 ```bash
-export OPENAI_API_KEY="sk-..."
+export OPENROUTER_API_KEY="sk-or-v1-..."
 export AGENT_API_BASE="http://127.0.0.1:8000/v1"
 export AGENT_API_KEY="EMPTY"
 
 MODEL="openai/qwen3-8b" \
 MODEL_PROVIDER=openai \
-USER_MODEL=gpt-4o \
-USER_MODEL_PROVIDER=openai \
+USER_MODEL=deepseek/deepseek-v4-flash \
+USER_MODEL_PROVIDER=openrouter \
 SUMMARY_MODEL="openai/qwen3-8b" \
 SUMMARY_MODEL_PROVIDER=openai \
 ENV_NAME=retail \
@@ -29,5 +29,8 @@ ADAPTATION_COUNTS="0 1 2" \
 The user simulator uses `USER_MODEL`. The query/support agent and memo summarizer use
 `MODEL` and `SUMMARY_MODEL`; set those to your vLLM-served model when evaluating your
 own model.
+
+Do not put API keys in this file. Set `OPENROUTER_API_KEY` in the shell or job
+environment on the machine that runs the benchmark.
 
 Outputs are written under `results_env_adaptation/`, including one JSON result file per adaptation count and one summary JSON.
