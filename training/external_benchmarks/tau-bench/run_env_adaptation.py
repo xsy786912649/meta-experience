@@ -219,6 +219,7 @@ def run_one_query(args: argparse.Namespace, query_task_id: int, trial: int, adap
         user_model=args.user_model,
         user_provider=args.user_model_provider,
         task_split=args.task_split,
+        task_index=0,
     )
     rng = random.Random(args.seed + trial * 100000 + query_task_id * 100 + adaptation_count)
     support_task_ids = select_support_task_ids(query_task_id, len(base_env.tasks), adaptation_count, rng)
@@ -237,7 +238,7 @@ def run_one_query(args: argparse.Namespace, query_task_id: int, trial: int, adap
                     user_model=args.user_model,
                     user_provider=args.user_model_provider,
                     task_split=args.task_split,
-                    task_index=support_task_id,
+                    task_index=0,
                 )
                 support_result = support_agent.solve(
                     env=support_env,
@@ -262,7 +263,7 @@ def run_one_query(args: argparse.Namespace, query_task_id: int, trial: int, adap
             user_model=args.user_model,
             user_provider=args.user_model_provider,
             task_split=args.task_split,
-            task_index=query_task_id,
+            task_index=0,
         )
         query_result: SolveResult = query_agent.solve(
             env=query_env,
@@ -317,6 +318,7 @@ def run(args: argparse.Namespace) -> List[EnvRunResult]:
         user_model=args.user_model,
         user_provider=args.user_model_provider,
         task_split=args.task_split,
+        task_index=0,
     )
     end_index = len(env.tasks) if args.end_index == -1 else min(args.end_index, len(env.tasks))
     task_ids = args.task_ids if args.task_ids else list(range(args.start_index, end_index))
