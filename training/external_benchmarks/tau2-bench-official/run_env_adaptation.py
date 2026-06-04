@@ -55,6 +55,10 @@ SUMMARY_USER_PROMPT_PREFIX = (
 )
 
 
+def safe_name(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "-" for ch in value)
+
+
 def _message_to_dict(message: Any) -> dict:
     if hasattr(message, "model_dump"):
         return message.model_dump(mode="json")
@@ -65,7 +69,9 @@ def _message_to_dict(message: Any) -> dict:
 
 def format_simulation(simulation: SimulationRun) -> str:
     reward = simulation.reward_info.reward if simulation.reward_info else None
+    support_outcome = "success" if reward is not None and abs(float(reward) - 1.0) < 1e-6 else "failure"
     lines = [
+        f"Support outcome: {support_outcome}",
         f"Task id: {simulation.task_id}",
         f"Reward: {reward}",
         f"Termination: {simulation.termination_reason}",
@@ -84,6 +90,8 @@ def extract_summary_context_text(summary_output: str) -> str:
         distilled = text.split("</think>")[-1].strip()
         if distilled:
             return distilled
+    if "<think>" in text:
+        return ""
     return text
 
 
@@ -289,7 +297,13 @@ def run_one_query(
                 simulation.reward_info.reward if simulation.reward_info else None
                 for simulation in support_simulations
             ],
+            "support_success_count": sum(
+                1
+                for simulation in support_simulations
+                if simulation.reward_info and abs(float(simulation.reward_info.reward) - 1.0) < 1e-6
+            ),
             "memo": memo,
+            "memo_chars": len(memo),
             "query_simulation": query_simulation.model_dump(mode="json"),
         }
     except Exception as exc:
@@ -304,7 +318,13 @@ def run_one_query(
                 simulation.reward_info.reward if simulation.reward_info else None
                 for simulation in support_simulations
             ],
+            "support_success_count": sum(
+                1
+                for simulation in support_simulations
+                if simulation.reward_info and abs(float(simulation.reward_info.reward) - 1.0) < 1e-6
+            ),
             "memo": memo,
+            "memo_chars": len(memo),
             "error": str(exc),
             "traceback": traceback.format_exc(),
         }
@@ -343,14 +363,16 @@ def run(args: argparse.Namespace) -> list[dict]:
     )
 
     os.makedirs(args.log_dir, exist_ok=True)
-    time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    time_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    agent_model_name = safe_name(args.agent_llm.split("/")[-1])
+    summary_model_name = safe_name((args.summary_llm or args.agent_llm).split("/")[-1])
     all_rows: list[dict] = []
     summary: list[dict] = []
 
     for adaptation_count in args.adaptation_counts:
         rows: list[dict] = []
         output_path = Path(args.log_dir) / (
-            f"tau2-env-adapt{adaptation_count}-{args.domain}-{args.task_split_name}-{time_str}.json"
+            f"tau2-env-adapt{adaptation_count}-{agent_model_name}-{args.domain}-{args.task_split_name}-{time_str}.json"
         )
         print(f"Running tau2 env adaptation: domain={args.domain}, adaptation_count={adaptation_count}")
         for trial in range(args.num_trials):
@@ -378,6 +400,9 @@ def run(args: argparse.Namespace) -> list[dict]:
         summary_row = {
             "domain": args.domain,
             "task_split_name": args.task_split_name,
+            "agent_llm": args.agent_llm,
+            "summary_llm": args.summary_llm or args.agent_llm,
+            "user_llm": args.user_llm,
             "adaptation_count": adaptation_count,
             "num_results": len(rows),
             "avg_reward": sum(rewards) / len(rewards) if rewards else 0.0,
@@ -388,7 +413,10 @@ def run(args: argparse.Namespace) -> list[dict]:
         all_rows.extend(rows)
         print(json.dumps(summary_row, indent=2))
 
-    summary_path = Path(args.log_dir) / f"tau2-env-adaptation-summary-{args.domain}-{time_str}.json"
+    summary_path = Path(args.log_dir) / (
+        f"tau2-env-adaptation-summary-{agent_model_name}-"
+        f"summary-{summary_model_name}-{args.domain}-{time_str}.json"
+    )
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"Summary saved to {summary_path}")

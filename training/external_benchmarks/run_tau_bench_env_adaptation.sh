@@ -24,6 +24,10 @@ SEED="${SEED:-10}"
 LOG_DIR="${LOG_DIR:-results_env_adaptation}"
 TEMPERATURE="${TEMPERATURE:-0.0}"
 MEMO_TEMPERATURE="${MEMO_TEMPERATURE:-0.0}"
+AGENT_MAX_TOKENS="${AGENT_MAX_TOKENS:-1024}"
+SUMMARY_MAX_TOKENS="${SUMMARY_MAX_TOKENS:-1024}"
+export AGENT_MAX_TOKENS
+export SUMMARY_MAX_TOKENS
 START_INDEX="${START_INDEX:-0}"
 END_INDEX="${END_INDEX:--1}"
 SHUFFLE="${SHUFFLE:-0}"
@@ -38,23 +42,24 @@ fi
 if [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; then
   AGENT_COMPLETION_KWARGS="$(python3 -c 'import json, os; d={}; 
 api_base=os.environ.get("AGENT_API_BASE"); api_key=os.environ.get("AGENT_API_KEY");
+max_tokens=os.environ.get("AGENT_MAX_TOKENS");
 if api_base: d["api_base"]=api_base
 if api_key: d["api_key"]=api_key
+if max_tokens: d["max_tokens"]=int(max_tokens)
 print(json.dumps(d))')"
 fi
 
-if [ -z "$SUMMARY_COMPLETION_KWARGS" ]; then
-  if [ -n "${SUMMARY_API_BASE:-}" ] || [ -n "${SUMMARY_API_KEY:-}" ]; then
+if [ -n "${SUMMARY_API_BASE:-}" ] || [ -n "${SUMMARY_API_KEY:-}" ] || [ -n "${SUMMARY_MAX_TOKENS:-}" ]; then
     SUMMARY_COMPLETION_KWARGS="$(python3 -c 'import json, os; d={};
-api_base=os.environ.get("SUMMARY_API_BASE"); api_key=os.environ.get("SUMMARY_API_KEY");
+api_base=os.environ.get("SUMMARY_API_BASE") or os.environ.get("AGENT_API_BASE");
+api_key=os.environ.get("SUMMARY_API_KEY") or os.environ.get("AGENT_API_KEY");
+max_tokens=os.environ.get("SUMMARY_MAX_TOKENS");
 if api_base: d["api_base"]=api_base
 if api_key: d["api_key"]=api_key
+if max_tokens: d["max_tokens"]=int(max_tokens)
 print(json.dumps(d))')"
-  elif [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; then
-    SUMMARY_COMPLETION_KWARGS="$AGENT_COMPLETION_KWARGS"
-  else
-    SUMMARY_COMPLETION_KWARGS="$AGENT_COMPLETION_KWARGS"
-  fi
+elif [ -z "$SUMMARY_COMPLETION_KWARGS" ]; then
+  SUMMARY_COMPLETION_KWARGS="$AGENT_COMPLETION_KWARGS"
 fi
 
 python3 -c 'import json, sys

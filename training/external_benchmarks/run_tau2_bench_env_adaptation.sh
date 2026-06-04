@@ -10,7 +10,7 @@ AGENT_LLM="${AGENT_LLM:?AGENT_LLM is required, e.g. AGENT_LLM=gpt-4.1}"
 USER_LLM="${USER_LLM:-openrouter/deepseek/deepseek-v4-flash}"
 SUMMARY_LLM="${SUMMARY_LLM:-$AGENT_LLM}"
 AGENT="${AGENT:-llm_agent}"
-USER="${USER:-user_simulator}"
+USER_SIMULATOR="${USER_SIMULATOR:-user_simulator}"
 TASK_SPLIT_NAME="${TASK_SPLIT_NAME:-base}"
 ADAPTATION_COUNTS="${ADAPTATION_COUNTS:-0 1 2}"
 NUM_TRIALS="${NUM_TRIALS:-1}"
@@ -21,6 +21,10 @@ MAX_CONCURRENCY="${MAX_CONCURRENCY:-1}"
 SEED="${SEED:-300}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
 LOG_DIR="${LOG_DIR:-data/env_adaptation}"
+AGENT_MAX_TOKENS="${AGENT_MAX_TOKENS:-1024}"
+SUMMARY_MAX_TOKENS="${SUMMARY_MAX_TOKENS:-1024}"
+export AGENT_MAX_TOKENS
+export SUMMARY_MAX_TOKENS
 AGENT_LLM_ARGS_PROVIDED="${AGENT_LLM_ARGS+x}"
 SUMMARY_LLM_ARGS_PROVIDED="${SUMMARY_LLM_ARGS+x}"
 AGENT_LLM_ARGS="${AGENT_LLM_ARGS:-{\"temperature\":0}}"
@@ -35,21 +39,24 @@ fi
 if [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; then
   AGENT_LLM_ARGS="$(python3 -c 'import json, os; d={"temperature":0};
 api_base=os.environ.get("AGENT_API_BASE"); api_key=os.environ.get("AGENT_API_KEY");
+max_tokens=os.environ.get("AGENT_MAX_TOKENS");
 if api_base: d["api_base"]=api_base
 if api_key: d["api_key"]=api_key
+if max_tokens: d["max_tokens"]=int(max_tokens)
 print(json.dumps(d))')"
 fi
 
-if [ -z "$SUMMARY_LLM_ARGS_PROVIDED" ]; then
-  if [ -n "${SUMMARY_API_BASE:-}" ] || [ -n "${SUMMARY_API_KEY:-}" ]; then
+if [ -n "${SUMMARY_API_BASE:-}" ] || [ -n "${SUMMARY_API_KEY:-}" ] || [ -n "${SUMMARY_MAX_TOKENS:-}" ]; then
     SUMMARY_LLM_ARGS="$(python3 -c 'import json, os; d={"temperature":0};
-api_base=os.environ.get("SUMMARY_API_BASE"); api_key=os.environ.get("SUMMARY_API_KEY");
+api_base=os.environ.get("SUMMARY_API_BASE") or os.environ.get("AGENT_API_BASE");
+api_key=os.environ.get("SUMMARY_API_KEY") or os.environ.get("AGENT_API_KEY");
+max_tokens=os.environ.get("SUMMARY_MAX_TOKENS");
 if api_base: d["api_base"]=api_base
 if api_key: d["api_key"]=api_key
+if max_tokens: d["max_tokens"]=int(max_tokens)
 print(json.dumps(d))')"
-  elif [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; then
-    SUMMARY_LLM_ARGS="$AGENT_LLM_ARGS"
-  fi
+elif [ -z "$SUMMARY_LLM_ARGS_PROVIDED" ] && { [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; }; then
+  SUMMARY_LLM_ARGS="$AGENT_LLM_ARGS"
 fi
 
 python3 -c 'import json, sys
@@ -72,7 +79,7 @@ cmd=(
   --agent "$AGENT"
   --agent-llm "$AGENT_LLM"
   --agent-llm-args "$AGENT_LLM_ARGS"
-  --user "$USER"
+  --user "$USER_SIMULATOR"
   --user-llm "$USER_LLM"
   --user-llm-args "$USER_LLM_ARGS"
   --summary-llm "$SUMMARY_LLM"

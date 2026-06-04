@@ -49,6 +49,10 @@ SUMMARY_USER_PROMPT_PREFIX = (
 )
 
 
+def safe_name(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "-" for ch in value)
+
+
 class AdaptedToolCallingAgent:
     def __init__(
         self,
@@ -142,7 +146,12 @@ def build_agent(tools_info: List[Dict[str, Any]], wiki: str, args: argparse.Name
 
 
 def format_trajectory(messages: List[Dict[str, Any]], reward: float, info: Dict[str, Any]) -> str:
-    lines = [f"Reward: {reward}", f"Info: {json.dumps(info, ensure_ascii=False, default=str)}"]
+    support_outcome = "success" if (1 - 1e-6) <= reward <= (1 + 1e-6) else "failure"
+    lines = [
+        f"Support outcome: {support_outcome}",
+        f"Reward: {reward}",
+        f"Info: {json.dumps(info, ensure_ascii=False, default=str)}",
+    ]
     for message in messages:
         role = message.get("role", "unknown")
         if role == "assistant" and message.get("tool_calls"):
@@ -173,6 +182,8 @@ def extract_summary_context_text(summary_output: str) -> str:
         distilled = text.split("</think>")[-1].strip()
         if distilled:
             return distilled
+    if "<think>" in text:
+        return ""
     return text
 
 
@@ -332,7 +343,11 @@ def run_one_query(args: argparse.Namespace, query_task_id: int, trial: int, adap
             "adaptation_count": adaptation_count,
             "support_task_ids": support_task_ids,
             "support_rewards": [item["result"].reward for item in support_results],
+            "support_success_count": sum(
+                1 for item in support_results if abs(float(item["result"].reward) - 1.0) < 1e-6
+            ),
             "memo": memo,
+            "memo_chars": len(memo),
             "support_cost": support_cost,
             "memo_cost": memo_cost,
             "query_cost": query_result.total_cost or 0.0,
@@ -354,7 +369,13 @@ def run_one_query(args: argparse.Namespace, query_task_id: int, trial: int, adap
                 "adaptation_count": adaptation_count,
                 "support_task_ids": support_task_ids,
                 "support_rewards": [item["result"].reward for item in support_results],
+                "support_success_count": sum(
+                    1 for item in support_results if abs(float(item["result"].reward) - 1.0) < 1e-6
+                ),
                 "memo": memo,
+                "memo_chars": len(memo),
+                "support_cost": support_cost,
+                "memo_cost": memo_cost,
             },
             traj=[],
             trial=trial,
@@ -384,14 +405,16 @@ def run(args: argparse.Namespace) -> List[EnvRunResult]:
         rng.shuffle(task_ids)
 
     os.makedirs(args.log_dir, exist_ok=True)
-    time_str = datetime.now().strftime("%m%d%H%M%S")
+    time_str = datetime.now().strftime("%m%d%H%M%S%f")
+    agent_model_name = safe_name(args.model.split("/")[-1])
+    summary_model_name = safe_name((args.summary_model or args.model).split("/")[-1])
     all_results: List[EnvRunResult] = []
     summary_rows = []
 
     for adaptation_count in args.adaptation_counts:
         ckpt_path = (
             f"{args.log_dir}/env-adapt{adaptation_count}-{args.agent_strategy}-"
-            f"{args.model.split('/')[-1]}-{args.temperature}_{args.env}_{args.task_split}_{time_str}.json"
+            f"{agent_model_name}-{args.temperature}_{args.env}_{args.task_split}_{time_str}.json"
         )
         results: List[EnvRunResult] = []
         print(f"Running adaptation_count={adaptation_count}, tasks={task_ids}, checkpoint={ckpt_path}")
@@ -419,6 +442,9 @@ def run(args: argparse.Namespace) -> List[EnvRunResult]:
         summary = {
             "env": args.env,
             "task_split": args.task_split,
+            "agent_model": args.model,
+            "summary_model": args.summary_model or args.model,
+            "user_model": args.user_model,
             "adaptation_count": adaptation_count,
             "num_results": len(results),
             "avg_reward": avg_reward,
@@ -429,7 +455,10 @@ def run(args: argparse.Namespace) -> List[EnvRunResult]:
         all_results.extend(results)
         print(json.dumps(summary, indent=2))
 
-    summary_path = f"{args.log_dir}/env-adaptation-summary-{args.env}-{args.task_split}_{time_str}.json"
+    summary_path = (
+        f"{args.log_dir}/env-adaptation-summary-{agent_model_name}-"
+        f"summary-{summary_model_name}-{args.env}-{args.task_split}_{time_str}.json"
+    )
     with open(summary_path, "w") as f:
         json.dump(summary_rows, f, indent=2)
     print(f"Summary saved to {summary_path}")
