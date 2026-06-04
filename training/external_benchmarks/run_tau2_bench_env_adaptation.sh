@@ -32,7 +32,7 @@ if [[ "$USER_LLM" == openrouter/* ]] && [ -z "${OPENROUTER_API_KEY:-}" ]; then
   exit 1
 fi
 
-if [ -z "$AGENT_LLM_ARGS_PROVIDED" ] && { [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; }; then
+if [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; then
   AGENT_LLM_ARGS="$(python3 -c 'import json, os; d={"temperature":0};
 api_base=os.environ.get("AGENT_API_BASE"); api_key=os.environ.get("AGENT_API_KEY");
 if api_base: d["api_base"]=api_base
@@ -52,15 +52,19 @@ print(json.dumps(d))')"
   fi
 fi
 
-python3 -c 'import json, os, sys
-for name in ("AGENT_LLM_ARGS", "USER_LLM_ARGS", "SUMMARY_LLM_ARGS"):
-    value = os.environ.get(name) or "{}"
+python3 -c 'import json, sys
+for name, value in {
+    "AGENT_LLM_ARGS": sys.argv[1],
+    "USER_LLM_ARGS": sys.argv[2],
+    "SUMMARY_LLM_ARGS": sys.argv[3],
+}.items():
+    value = value or "{}"
     try:
         json.loads(value)
     except Exception as exc:
         print(f"{name} must be valid JSON: {value}\n{exc}", file=sys.stderr)
         sys.exit(1)
-'
+' "$AGENT_LLM_ARGS" "$USER_LLM_ARGS" "$SUMMARY_LLM_ARGS"
 
 cmd=(
   python3 run_env_adaptation.py

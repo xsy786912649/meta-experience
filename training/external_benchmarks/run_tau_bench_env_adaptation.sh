@@ -35,7 +35,7 @@ if [ "$USER_MODEL_PROVIDER" = "openrouter" ] && [ -z "${OPENROUTER_API_KEY:-}" ]
   exit 1
 fi
 
-if [ -z "$AGENT_COMPLETION_KWARGS" ] && { [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; }; then
+if [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; then
   AGENT_COMPLETION_KWARGS="$(python3 -c 'import json, os; d={}; 
 api_base=os.environ.get("AGENT_API_BASE"); api_key=os.environ.get("AGENT_API_KEY");
 if api_base: d["api_base"]=api_base
@@ -50,20 +50,33 @@ api_base=os.environ.get("SUMMARY_API_BASE"); api_key=os.environ.get("SUMMARY_API
 if api_base: d["api_base"]=api_base
 if api_key: d["api_key"]=api_key
 print(json.dumps(d))')"
+  elif [ -n "${AGENT_API_BASE:-}" ] || [ -n "${AGENT_API_KEY:-}" ]; then
+    SUMMARY_COMPLETION_KWARGS="$AGENT_COMPLETION_KWARGS"
   else
     SUMMARY_COMPLETION_KWARGS="$AGENT_COMPLETION_KWARGS"
   fi
 fi
 
-python3 -c 'import json, os, sys
-for name in ("AGENT_COMPLETION_KWARGS", "SUMMARY_COMPLETION_KWARGS"):
-    value = os.environ.get(name) or "{}"
+python3 -c 'import json, sys
+for name, value in {
+    "AGENT_COMPLETION_KWARGS": sys.argv[1],
+    "SUMMARY_COMPLETION_KWARGS": sys.argv[2],
+}.items():
+    value = value or "{}"
     try:
         json.loads(value)
     except Exception as exc:
         print(f"{name} must be valid JSON: {value}\n{exc}", file=sys.stderr)
         sys.exit(1)
-'
+' "$AGENT_COMPLETION_KWARGS" "$SUMMARY_COMPLETION_KWARGS"
+
+if [ -z "$AGENT_COMPLETION_KWARGS" ]; then
+  AGENT_COMPLETION_KWARGS="{}"
+fi
+
+if [ -z "$SUMMARY_COMPLETION_KWARGS" ]; then
+  SUMMARY_COMPLETION_KWARGS="{}"
+fi
 
 cmd=(
   python3 run_env_adaptation.py
@@ -88,8 +101,8 @@ cmd=(
   --start-index "$START_INDEX"
   --end-index "$END_INDEX"
   --shuffle "$SHUFFLE"
-  --agent-completion-kwargs "${AGENT_COMPLETION_KWARGS:-{}}"
-  --summary-completion-kwargs "${SUMMARY_COMPLETION_KWARGS:-{}}"
+  --agent-completion-kwargs "$AGENT_COMPLETION_KWARGS"
+  --summary-completion-kwargs "$SUMMARY_COMPLETION_KWARGS"
   --adaptation-counts
 )
 
