@@ -2,6 +2,8 @@
 
 import abc
 import enum
+import os
+import time
 from litellm import completion
 
 from typing import Optional, List, Dict, Any, Union
@@ -41,19 +43,37 @@ class LLMUserSimulationEnv(BaseUserSimulationEnv):
         self.model = model
         self.provider = provider
         self.total_cost = 0.0
+        self.max_attempts = int(os.environ.get("USER_SIM_MAX_RETRIES", "3"))
+        self.retry_backoff = float(os.environ.get("USER_SIM_RETRY_BACKOFF", "1"))
         self.reset()
 
-    def generate_next_message(self, messages: List[Dict[str, Any]]) -> str:
-        res = completion(
-            model=self.model,
-            custom_llm_provider=self.provider,
-            messages=messages,
-            temperature=0,
+    def generate_llm_message(self, messages: List[Dict[str, Any]]):
+        last_error = None
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                res = completion(
+                    model=self.model,
+                    custom_llm_provider=self.provider,
+                    messages=messages,
+                    temperature=0,
+                )
+                message = res.choices[0].message
+                content = message.content
+                if isinstance(content, str) and content.strip():
+                    self.messages.append(message.model_dump())
+                    self.total_cost = res._hidden_params["response_cost"]
+                    return message
+                last_error = ValueError("User simulator returned empty content")
+            except Exception as exc:
+                last_error = exc
+            if attempt < self.max_attempts:
+                time.sleep(self.retry_backoff * attempt)
+        raise RuntimeError(
+            f"User simulator failed after {self.max_attempts} attempts: {last_error}"
         )
-        message = res.choices[0].message
-        self.messages.append(message.model_dump())
-        self.total_cost = res._hidden_params["response_cost"]
-        return message.content
+
+    def generate_next_message(self, messages: List[Dict[str, Any]]) -> str:
+        return self.generate_llm_message(messages).content
 
     def build_system_prompt(self, instruction: Optional[str]) -> str:
         instruction_display = (
@@ -118,15 +138,7 @@ User Response:
 <the user response (this will be parsed and sent to the agent)>"""
 
     def generate_next_message(self, messages: List[Dict[str, Any]]) -> str:
-        res = completion(
-            model=self.model,
-            custom_llm_provider=self.provider,
-            messages=messages,
-            temperature=0,
-        )
-        message = res.choices[0].message
-        self.messages.append(message.model_dump())
-        self.total_cost = res._hidden_params["response_cost"]
+        message = self.generate_llm_message(messages)
         return self.parse_response(message.content)
 
     def reset(self, instruction: Optional[str] = None) -> str:
@@ -164,6 +176,7 @@ class VerifyUserSimulationEnv(LLMUserSimulationEnv):
         self.model = model
         self.provider = provider
         self.max_attempts = max_attempts
+        self.retry_backoff = float(os.environ.get("USER_SIM_RETRY_BACKOFF", "1"))
         self.reset()
 
     def generate_next_message(self, messages: List[Dict[str, Any]]) -> str:
@@ -178,11 +191,21 @@ class VerifyUserSimulationEnv(LLMUserSimulationEnv):
             )
             cur_message = res.choices[0].message
             self.total_cost = res._hidden_params["response_cost"]
-            if verify(self.model, self.provider, cur_message, messages):
+            if (
+                isinstance(cur_message.content, str)
+                and cur_message.content.strip()
+                and verify(self.model, self.provider, cur_message, messages)
+            ):
                 self.messages.append(cur_message.model_dump())
                 return cur_message.content
             attempts += 1
+            if attempts < self.max_attempts:
+                time.sleep(self.retry_backoff * attempts)
         assert cur_message is not None
+        if not isinstance(cur_message.content, str) or not cur_message.content.strip():
+            raise RuntimeError(
+                f"User simulator failed after {self.max_attempts} attempts: empty content"
+            )
         return cur_message.content
 
     def reset(self, instruction: Optional[str] = None) -> str:

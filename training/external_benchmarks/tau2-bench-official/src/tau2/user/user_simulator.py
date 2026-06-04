@@ -1,3 +1,5 @@
+import os
+import time
 from typing import Generic, Optional, Tuple, TypeVar
 
 from loguru import logger
@@ -231,14 +233,39 @@ class UserSimulator(
             state.messages.append(message)
         messages = state.system_messages + state.flip_roles()
 
-        # Generate response
-        assistant_message = generate(
-            model=self.llm,
-            messages=messages,
-            tools=self.tools,
-            call_name="user_simulator_response",
-            **self.llm_args,
-        )
+        max_attempts = int(os.environ.get("USER_SIM_MAX_RETRIES", "3"))
+        retry_backoff = float(os.environ.get("USER_SIM_RETRY_BACKOFF", "1"))
+        last_error = None
+        assistant_message = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                assistant_message = generate(
+                    model=self.llm,
+                    messages=messages,
+                    tools=self.tools,
+                    call_name="user_simulator_response",
+                    **self.llm_args,
+                )
+                if isinstance(assistant_message.content, str) and assistant_message.content.strip():
+                    break
+                if assistant_message.tool_calls is not None:
+                    break
+                last_error = ValueError("User simulator returned empty content")
+            except Exception as exc:
+                last_error = exc
+            if attempt < max_attempts:
+                time.sleep(retry_backoff * attempt)
+        if assistant_message is None:
+            raise RuntimeError(
+                f"User simulator failed after {max_attempts} attempts: {last_error}"
+            )
+        if (
+            not isinstance(assistant_message.content, str)
+            or not assistant_message.content.strip()
+        ) and assistant_message.tool_calls is None:
+            raise RuntimeError(
+                f"User simulator failed after {max_attempts} attempts: empty content"
+            )
 
         user_response = assistant_message.content
         logger.debug(f"Response: {user_response}")
