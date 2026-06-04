@@ -55,6 +55,16 @@ print(json.dumps(d))')"
   fi
 fi
 
+python3 -c 'import json, os, sys
+for name in ("AGENT_COMPLETION_KWARGS", "SUMMARY_COMPLETION_KWARGS"):
+    value = os.environ.get(name) or "{}"
+    try:
+        json.loads(value)
+    except Exception as exc:
+        print(f"{name} must be valid JSON: {value}\n{exc}", file=sys.stderr)
+        sys.exit(1)
+'
+
 cmd=(
   python3 run_env_adaptation.py
   --env "$ENV_NAME"
