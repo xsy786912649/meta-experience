@@ -7,7 +7,7 @@ cd "$BENCH_DIR"
 
 DOMAIN="${DOMAIN:-airline}"
 AGENT_LLM="${AGENT_LLM:?AGENT_LLM is required, e.g. AGENT_LLM=gpt-4.1}"
-USER_LLM="${USER_LLM:-$AGENT_LLM}"
+USER_LLM="${USER_LLM:-gpt-4.1}"
 SUMMARY_LLM="${SUMMARY_LLM:-$AGENT_LLM}"
 AGENT="${AGENT:-llm_agent}"
 USER="${USER:-user_simulator}"

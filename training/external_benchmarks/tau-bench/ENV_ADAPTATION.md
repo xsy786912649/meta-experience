@@ -11,16 +11,23 @@ The memo is appended to the query agent's system/wiki prompt. Original `run.py` 
 Example:
 
 ```bash
-python run_env_adaptation.py \
-  --agent-strategy tool-calling \
-  --env retail \
-  --model gpt-4o \
-  --model-provider openai \
-  --user-model gpt-4o \
-  --user-model-provider openai \
-  --user-strategy llm \
-  --adaptation-counts 0 1 2 \
-  --max-concurrency 4
+export OPENAI_API_KEY="sk-..."
+export AGENT_API_BASE="http://127.0.0.1:8000/v1"
+export AGENT_API_KEY="EMPTY"
+
+MODEL="openai/qwen3-8b" \
+MODEL_PROVIDER=openai \
+USER_MODEL=gpt-4o \
+USER_MODEL_PROVIDER=openai \
+SUMMARY_MODEL="openai/qwen3-8b" \
+SUMMARY_MODEL_PROVIDER=openai \
+ENV_NAME=retail \
+ADAPTATION_COUNTS="0 1 2" \
+../run_tau_bench_env_adaptation.sh
 ```
+
+The user simulator uses `USER_MODEL`. The query/support agent and memo summarizer use
+`MODEL` and `SUMMARY_MODEL`; set those to your vLLM-served model when evaluating your
+own model.
 
 Outputs are written under `results_env_adaptation/`, including one JSON result file per adaptation count and one summary JSON.

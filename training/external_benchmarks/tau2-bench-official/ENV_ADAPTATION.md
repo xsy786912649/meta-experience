@@ -11,12 +11,21 @@ The memo is appended to the query agent's domain policy. Original `tau2 run` beh
 Example:
 
 ```bash
-uv run python run_env_adaptation.py \
-  --domain airline \
-  --agent-llm gpt-4.1 \
-  --user-llm gpt-4.1 \
-  --adaptation-counts 0 1 2 \
-  --num-tasks 5
+export OPENAI_API_KEY="sk-..."
+export AGENT_API_BASE="http://127.0.0.1:8000/v1"
+export AGENT_API_KEY="EMPTY"
+
+AGENT_LLM="openai/qwen3-8b" \
+USER_LLM=gpt-4.1 \
+SUMMARY_LLM="openai/qwen3-8b" \
+DOMAIN=airline \
+ADAPTATION_COUNTS="0 1 2" \
+NUM_TASKS=5 \
+uv run ../run_tau2_bench_env_adaptation.sh
 ```
+
+The user simulator uses `USER_LLM`. The query/support agent and memo summarizer use
+`AGENT_LLM` and `SUMMARY_LLM`; set those to your vLLM-served model when evaluating
+your own model.
 
 Outputs are written under `data/env_adaptation/`, including one JSON result file per adaptation count and one summary JSON.
