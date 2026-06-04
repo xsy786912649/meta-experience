@@ -5,7 +5,7 @@ import json
 import os
 import random
 import traceback
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from math import comb
 from typing import Any, Dict, List, Optional
@@ -340,15 +340,21 @@ def run(args: argparse.Namespace) -> List[EnvRunResult]:
         print(f"Running adaptation_count={adaptation_count}, tasks={task_ids}, checkpoint={ckpt_path}")
         for trial in range(args.num_trials):
             with ThreadPoolExecutor(max_workers=args.max_concurrency) as executor:
-                trial_results = list(
-                    executor.map(
-                        lambda task_id: run_one_query(args, task_id, trial, adaptation_count),
-                        task_ids,
+                futures = {
+                    executor.submit(run_one_query, args, task_id, trial, adaptation_count): task_id
+                    for task_id in task_ids
+                }
+                for future in as_completed(futures):
+                    task_id = futures[future]
+                    result = future.result()
+                    results.append(result)
+                    print(
+                        f"[tau-bench] adapt={adaptation_count} trial={trial} "
+                        f"task={task_id} reward={result.reward} checkpoint={ckpt_path}",
+                        flush=True,
                     )
-                )
-            results.extend(trial_results)
-            with open(ckpt_path, "w") as f:
-                json.dump([result.model_dump() for result in results], f, indent=2)
+                    with open(ckpt_path, "w") as f:
+                        json.dump([item.model_dump() for item in results], f, indent=2)
 
         rewards = [result.reward for result in results]
         avg_reward = sum(rewards) / len(rewards) if rewards else 0.0

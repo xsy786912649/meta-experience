@@ -5,7 +5,7 @@ import os
 import random
 import traceback
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -289,19 +289,28 @@ def run(args: argparse.Namespace) -> list[dict]:
 
     for adaptation_count in args.adaptation_counts:
         rows: list[dict] = []
-        print(f"Running tau2 env adaptation: domain={args.domain}, adaptation_count={adaptation_count}")
-        for trial in range(args.num_trials):
-            with ThreadPoolExecutor(max_workers=args.max_concurrency) as executor:
-                rows.extend(
-                    executor.map(
-                        lambda task: run_one_query(config, tasks, task, adaptation_count, trial, args),
-                        tasks,
-                    )
-                )
-
         output_path = Path(args.log_dir) / (
             f"tau2-env-adapt{adaptation_count}-{args.domain}-{args.task_split_name}-{time_str}.json"
         )
+        print(f"Running tau2 env adaptation: domain={args.domain}, adaptation_count={adaptation_count}")
+        for trial in range(args.num_trials):
+            with ThreadPoolExecutor(max_workers=args.max_concurrency) as executor:
+                futures = {
+                    executor.submit(run_one_query, config, tasks, task, adaptation_count, trial, args): task
+                    for task in tasks
+                }
+                for future in as_completed(futures):
+                    task = futures[future]
+                    row = future.result()
+                    rows.append(row)
+                    print(
+                        f"[tau2-bench] adapt={adaptation_count} trial={trial} "
+                        f"task={task.id} reward={row.get('reward')} checkpoint={output_path}",
+                        flush=True,
+                    )
+                    with open(output_path, "w") as f:
+                        json.dump(rows, f, indent=2)
+
         with open(output_path, "w") as f:
             json.dump(rows, f, indent=2)
 
