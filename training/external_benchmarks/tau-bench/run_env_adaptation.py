@@ -174,6 +174,13 @@ def format_trajectory(messages: List[Dict[str, Any]], reward: float, info: Dict[
     return "\n".join(lines)
 
 
+def truncate_support_text(text: str) -> str:
+    max_chars = int(os.environ.get("TAU_BENCH_SUPPORT_SUMMARY_MAX_CHARS", "16000"))
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    return text[:max_chars] + f"\n\n[Support trajectory truncated at {max_chars} characters.]"
+
+
 def extract_summary_context_text(summary_output: str) -> str:
     text = (summary_output or "").strip()
     if not text:
@@ -207,7 +214,7 @@ def summarize_support_trajectories(
     support_text = "\n\n".join(
         [
             f"### Support task {item['task_id']}\n"
-            f"{format_trajectory(item['result'].messages, item['result'].reward, item['result'].info)}"
+            f"{truncate_support_text(format_trajectory(item['result'].messages, item['result'].reward, item['result'].info))}"
             for item in support_results
         ]
     )

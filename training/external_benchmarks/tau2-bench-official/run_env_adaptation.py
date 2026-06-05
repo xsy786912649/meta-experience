@@ -82,6 +82,13 @@ def format_simulation(simulation: SimulationRun) -> str:
     return "\n".join(lines)
 
 
+def truncate_support_text(text: str) -> str:
+    max_chars = int(os.environ.get("TAU2_SUPPORT_SUMMARY_MAX_CHARS", "16000"))
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    return text[:max_chars] + f"\n\n[Support trajectory truncated at {max_chars} characters.]"
+
+
 def extract_summary_context_text(summary_output: str) -> str:
     text = (summary_output or "").strip()
     if not text:
@@ -116,7 +123,7 @@ def summarize_support_simulations(
 ) -> str:
     support_text = "\n\n".join(
         [
-            f"### Support task {simulation.task_id}\n{format_simulation(simulation)}"
+            f"### Support task {simulation.task_id}\n{truncate_support_text(format_simulation(simulation))}"
             for simulation in support_simulations
         ]
     )
