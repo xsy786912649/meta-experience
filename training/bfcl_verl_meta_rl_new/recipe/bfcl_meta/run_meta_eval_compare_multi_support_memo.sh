@@ -64,7 +64,7 @@ build_eval_file() {
     --output "$output_file" \
     --split "$dataset" \
     --support-count "$support_count" \
-    --seed "$SEED" >&2
+    --seed "$SEED" >&2 || return
   echo "$output_file"
 }
 

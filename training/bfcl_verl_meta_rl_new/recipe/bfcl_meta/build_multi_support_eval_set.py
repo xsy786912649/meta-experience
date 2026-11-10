@@ -18,9 +18,16 @@ def _decode_payload(row: dict) -> dict:
     return payload
 
 
-def _experience_key(row: dict) -> str:
-    payload = _decode_payload(row)
-    return row.get("experience_key") or payload.get("experience_key", "")
+def _experience_group(row: dict, payload: dict) -> tuple[str, str]:
+    env_key = row["env_key"]
+    category = payload["query"].get("category") or row.get("category") or payload.get("category")
+    support_category = payload["support"].get("category")
+    if not category or support_category != category:
+        raise ValueError(
+            f"Pair {row['pair_id']} must have matching support and query categories "
+            f"(support={support_category!r}, query={category!r})."
+        )
+    return env_key, category
 
 
 def _support_dedup_key(row: dict) -> str:
@@ -32,25 +39,32 @@ def _support_dedup_key(row: dict) -> str:
     return "json:" + json.dumps(support_payload, ensure_ascii=False, sort_keys=True)
 
 
-def build_multi_support_rows(rows: list[dict], split_name: str, support_count: int, seed: int) -> list[dict]:
-    support_pool_by_env = defaultdict(dict)
+def build_multi_support_rows(
+    rows: list[dict], split_name: str, support_count: int, seed: int
+) -> tuple[list[dict], dict[str, int]]:
+    support_pool_by_group = defaultdict(dict)
+    row_groups = []
     for row in rows:
-        support_pool_by_env[row["env_key"]].setdefault(_support_dedup_key(row), row)
+        group = _experience_group(row, _decode_payload(row))
+        row_groups.append(group)
+        support_pool_by_group[group].setdefault(_support_dedup_key(row), row)
 
     rng = random.Random(seed)
     output_rows = []
     num_rows_total = 0
     num_rows_kept = 0
     num_rows_skipped_insufficient_supports = 0
-    num_unique_supports_total = sum(len(pool) for pool in support_pool_by_env.values())
-    for row in rows:
+    num_unique_supports_total = sum(len(pool) for pool in support_pool_by_group.values())
+    for row, group in zip(rows, row_groups):
         num_rows_total += 1
-        env_key = row["env_key"]
+        env_key, category = group
+        experience_key = f"{env_key}::{category}"
         payload = _decode_payload(row)
         original_support_key = _support_dedup_key(row)
-        support_pool_rows = list(support_pool_by_env[env_key].values())
         extra_support_rows = [
-            support_row for support_row in support_pool_rows if _support_dedup_key(support_row) != original_support_key
+            support_row
+            for support_key, support_row in support_pool_by_group[group].items()
+            if support_key != original_support_key
         ]
         rng.shuffle(extra_support_rows)
         selected_support_rows = [row] + extra_support_rows[: max(0, support_count - 1)]
@@ -64,8 +78,8 @@ def build_multi_support_rows(rows: list[dict], split_name: str, support_count: i
         pair_payload = {
             "pair_split": split_name,
             "env_key": env_key,
-            "category": row.get("category") or payload.get("category"),
-            "experience_key": _experience_key(row),
+            "category": category,
+            "experience_key": experience_key,
             "supports": supports,
             "queries": [payload["query"]],
         }
@@ -75,8 +89,8 @@ def build_multi_support_rows(rows: list[dict], split_name: str, support_count: i
                 "data_source": "bfcl_meta_summary",
                 "pair_id": pair_id,
                 "env_key": env_key,
-                "category": row.get("category") or payload.get("category"),
-                "experience_key": _experience_key(row),
+                "category": category,
+                "experience_key": experience_key,
                 "support_id": support_id_suffix,
                 "query_id": row["query_id"],
                 "flag": pair_id,
@@ -90,7 +104,8 @@ def build_multi_support_rows(rows: list[dict], split_name: str, support_count: i
         "num_rows_total": num_rows_total,
         "num_rows_kept": num_rows_kept,
         "num_rows_skipped_insufficient_supports": num_rows_skipped_insufficient_supports,
-        "num_envs": len(support_pool_by_env),
+        "num_envs": len({env_key for env_key, _ in support_pool_by_group}),
+        "num_experience_groups": len(support_pool_by_group),
         "num_unique_supports_total": num_unique_supports_total,
     }
 
@@ -106,6 +121,8 @@ def main():
 
     rows = _load_rows(os.path.abspath(os.path.expanduser(args.input)))
     output_rows, stats = build_multi_support_rows(rows, args.split, args.support_count, args.seed)
+    if not output_rows:
+        parser.error(f"No {args.split} pairs have {args.support_count} supports in the same environment and category.")
     os.makedirs(os.path.dirname(os.path.abspath(os.path.expanduser(args.output))), exist_ok=True)
     datasets.Dataset.from_list(output_rows).to_parquet(os.path.abspath(os.path.expanduser(args.output)))
     print(
